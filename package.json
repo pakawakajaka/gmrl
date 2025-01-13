@@ -1,0 +1,20 @@
+{
+  "name": "gmrl",
+  "version": "1.0.0",
+  "description": "Guild Master Raid Leader",
+  "main": "interface.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pakawakajaka/gmrl.git"
+  },
+  "author": "Austin Lane",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/pakawakajaka/gmrl/issues"
+  },
+  "type": "module",
+  "homepage": "https://github.com/pakawakajaka/gmrl#readme"
+}
