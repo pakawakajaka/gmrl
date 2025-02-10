@@ -8,25 +8,33 @@ const trollwarr = new Character("Trollwarrior", "Warrior", "Troll")
 const paka = new Character("Pakawakajaka", "Shaman", "Tauren")
 const bassor = new Character("Bassor", "Paladin", "Blood Elf")
 
-const tymf = new Guild([trollwarr, paka])
-const sbs = new Guild([bassor])
+const tymf = new Guild("TYMF", [trollwarr, paka])
+const sbs = new Guild("South Bank Satellites", [bassor])
 
 const account1 = new Account("bassor", "password", [tymf, sbs])
 
-
-
 let characters = account1.accountGuilds[0].characters;
 let characterText = ''
+let iconimg;
+
+document.getElementById("chars").innerText = "Characters: \n"
+
 
 for(let c in characters) {
-    characterText += characters[c].characterName + "\n" + characters[c].characterClass + "\n" + characters[c].characterRace + "<br>"
+    characterText += characters[c].characterName + "\n Level " +  characters[c].characterLevel + " " +  characters[c].characterRace + " " + characters[c].characterClass + "\n\n"
+    iconimg = document.createElement("img")
+    iconimg.setAttribute('src', characters[c].classIcon)
+    console.log(characters[c].classIcon)
+    document.getElementById('chars').appendChild(iconimg)
 }
+
+
 
 document.getElementById("characters").innerHTML = characterText
 
 
+document.getElementById("guild").innerHTML = "Guild: " + account1.accountGuilds[0].guildName
 
 
 
-
-document.getElementById("accountName").innerHTML = "Account Name: " + account1.accountName
+document.getElementById("accountName").innerHTML = "Account: " + account1.accountName

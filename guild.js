@@ -1,6 +1,6 @@
 export default class Guild {
-    constructor(characters) {
-        this.guildName;
+    constructor(name, characters) {
+        this.guildName = name;
         this.characters = characters;
     }
 }

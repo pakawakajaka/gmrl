@@ -3,5 +3,7 @@ export default class Character {
         this.characterName = characterName
         this.characterClass = characterClass;
         this.characterRace = characterRace;
+        this.characterLevel = 1;
+        this.classIcon = `icons/${this.characterClass.toLowerCase()}.jpg`
       }
 }
