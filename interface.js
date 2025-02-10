@@ -14,27 +14,19 @@ const sbs = new Guild("South Bank Satellites", [bassor])
 const account1 = new Account("bassor", "password", [tymf, sbs])
 
 let characters = account1.accountGuilds[0].characters;
-let characterText = ''
-let iconimg;
-
-document.getElementById("chars").innerText = "Characters: \n"
 
 
-for(let c in characters) {
-    characterText += characters[c].characterName + "\n Level " +  characters[c].characterLevel + " " +  characters[c].characterRace + " " + characters[c].characterClass + "\n\n"
-    iconimg = document.createElement("img")
-    iconimg.setAttribute('src', characters[c].classIcon)
-    console.log(characters[c].classIcon)
-    document.getElementById('chars').appendChild(iconimg)
-}
-
-
-
-document.getElementById("characters").innerHTML = characterText
-
+document.getElementById("charactersTitle").innerText = "Characters: \n"
 
 document.getElementById("guild").innerHTML = "Guild: " + account1.accountGuilds[0].guildName
 
-
-
 document.getElementById("accountName").innerHTML = "Account: " + account1.accountName
+
+
+
+for (let c in characters) {
+  const charElements = characters[c].characterElements()
+  for (let e in charElements) {
+    document.getElementById('characters').appendChild(charElements[e])
+  }
+}
