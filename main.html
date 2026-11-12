@@ -1,14 +1,17 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
     <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>Guild Master Raid Leader</title>
+        <link rel="stylesheet" href="styles.css">
+        <script type="module" src="interface.js"></script>
     </head>
     <body>
-        <h1 id="accountName"></h1>
-        <h2 id="guild"></h2>
-        <h3 style="white-space: pre-line" id="charactersTitle"></h3>
-        <div style="white-space: pre-line" id="characters"></div>
-        <script type="module" src="interface.js"></script>
+        <header class="site-header">
+            <a class="brand" href="#/roster">Guild Master Raid Leader</a>
+            <p class="account">Account: <strong id="accountName"></strong></p>
+        </header>
+        <main id="app"></main>
     </body>
-    <p></p>
 </html>

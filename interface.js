@@ -1,32 +1,64 @@
-import Account from './account.js'
-import Character from './character.js'
-import Guild from './guild.js'
+import { renderCharacterForm } from './character-form.js'
+import { renderRoster } from './roster.js'
+import { createDefaultAccount, loadAccount, saveAccount } from './storage.js'
 
+const APP_TITLE = 'Guild Master Raid Leader'
+const app = document.getElementById('app')
 
+let account = loadAccount()
+let selectedGuild = null
 
-const trollwarr = new Character("Trollwarrior", "Warrior", "Troll")
-const paka = new Character("Pakawakajaka", "Shaman", "Tauren")
-const bassor = new Character("Bassor", "Paladin", "Blood Elf")
+function render() {
+  const [view, id] = location.hash.replace(/^#\/?/, '').split('/')
+  const character = view === 'edit' ? account.getCharacter(id) : undefined
 
-const tymf = new Guild("TYMF", [trollwarr, paka])
-const sbs = new Guild("South Bank Satellites", [bassor])
+  document.getElementById('accountName').textContent = account.accountName
 
-const account1 = new Account("bassor", "password", [tymf, sbs])
-
-let characters = account1.accountGuilds[0].characters;
-
-
-document.getElementById("charactersTitle").innerText = "Characters: \n"
-
-document.getElementById("guild").innerHTML = "Guild: " + account1.accountGuilds[0].guildName
-
-document.getElementById("accountName").innerHTML = "Account: " + account1.accountName
-
-
-
-for (let c in characters) {
-  const charElements = characters[c].characterElements()
-  for (let e in charElements) {
-    document.getElementById('characters').appendChild(charElements[e])
+  if (view === 'create' || character) {
+    app.replaceChildren(renderCharacterForm({ account, character, onSave: handleSave }))
+  } else {
+    app.replaceChildren(renderRoster({
+      account,
+      selectedGuild,
+      onSelectGuild: handleSelectGuild,
+      onDelete: handleDelete,
+      onReset: handleReset,
+    }))
   }
+
+  document.title = `${app.querySelector('#view-title').textContent} · ${APP_TITLE}`
+  app.querySelector('[data-autofocus]')?.focus()
 }
+
+function handleSave(character, guildNames) {
+  account.saveCharacter(character, guildNames)
+  saveAccount(account)
+  location.hash = '#/roster'
+}
+
+function handleSelectGuild(guildName) {
+  selectedGuild = guildName
+  render()
+  app.querySelector('.chip[aria-pressed="true"]')?.focus()
+}
+
+function handleDelete(character) {
+  if (!confirm(`Delete ${character.characterName}? This can't be undone.`)) return
+  account.deleteCharacter(character.id)
+  saveAccount(account)
+  render()
+}
+
+function handleReset() {
+  if (!confirm('Replace all characters and guilds with the default data?')) return
+  account = createDefaultAccount()
+  selectedGuild = null
+  saveAccount(account)
+  render()
+}
+
+window.addEventListener('hashchange', () => {
+  render()
+  window.scrollTo(0, 0)
+})
+render()

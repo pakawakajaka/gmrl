@@ -4,6 +4,7 @@
   "description": "Guild Master Raid Leader",
   "main": "interface.js",
   "scripts": {
+    "start": "npx live-server --open=main.html",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {

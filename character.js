@@ -1,21 +1,65 @@
+import { CLASSES, MAX_LEVEL, MIN_LEVEL, NAME_PATTERN, RACES, ROLES, classIcon } from './data.js'
+
+const lookup = (table, key) => (Object.hasOwn(table, key) ? table[key] : undefined)
+
 export default class Character {
-    constructor(characterName, characterClass, characterRace) {
-        this.characterName = characterName
-        this.characterClass = characterClass;
-        this.characterRace = characterRace;
-        this.characterLevel = 1;
-        this.classIcon = `icons/${this.characterClass.toLowerCase()}.jpg`
-      }
+  constructor({ id = crypto.randomUUID(), characterName, characterClass, characterSpec, characterRace, characterRole, characterLevel = MIN_LEVEL }) {
+    this.id = id
+    this.characterName = Character.formatName(characterName)
+    this.characterClass = characterClass
+    this.characterSpec = characterSpec
+    this.characterRace = characterRace
+    this.characterRole = characterRole
+    this.characterLevel = Number(characterLevel)
+  }
 
-    characterElements() {
-      const iconEle = document.createElement('img')
-      iconEle.setAttribute('src', this.classIcon)
+  get faction() {
+    return RACES[this.characterRace].faction
+  }
 
-      const textEle = document.createElement('p')
-      const text = this.characterName + "\n Level " + this.characterLevel + " " +  this.characterRace + " " + this.characterClass
-      textEle.innerText = text
+  get classColor() {
+    return CLASSES[this.characterClass].color
+  }
 
-      return [ iconEle, textEle]
+  get classIcon() {
+    return classIcon(this.characterClass)
+  }
+
+  static formatName(name) {
+    const trimmed = String(name ?? '').trim()
+    return trimmed.charAt(0).toUpperCase() + trimmed.slice(1).toLowerCase()
+  }
+
+  // Returns { field: message } for each invalid field; empty object when valid.
+  static validate({ characterName, characterRace, characterClass, characterSpec, characterRole, characterLevel }) {
+    const errors = {}
+    const race = lookup(RACES, characterRace)
+    const cls = lookup(CLASSES, characterClass)
+    const level = Number(characterLevel)
+
+    if (!NAME_PATTERN.test(String(characterName ?? '').trim())) {
+      errors.characterName = 'Name must be 2 to 12 letters (A to Z only).'
     }
-    
+    if (!race) errors.characterRace = 'Choose a race.'
+    if (!cls) errors.characterClass = 'Choose a class.'
+    else if (race && !race.classes.includes(characterClass)) {
+      errors.characterClass = `${characterRace} can't be a ${characterClass}.`
+    }
+    if (!ROLES.includes(characterRole)) errors.characterRole = 'Choose a role.'
+    else if (cls && !cls.roles.includes(characterRole)) {
+      errors.characterRole = `${characterClass} can't fill the ${characterRole} role.`
+    }
+    if (cls) {
+      const specRoles = lookup(cls.specs, characterSpec)
+      if (!characterSpec) errors.characterSpec = 'Choose a spec.'
+      else if (!specRoles) errors.characterSpec = `${characterClass} has no ${characterSpec} spec.`
+      else if (!errors.characterRole && !specRoles.includes(characterRole)) {
+        errors.characterSpec = `${characterSpec} ${characterClass} can't fill the ${characterRole} role.`
+      }
+    }
+    if (!Number.isInteger(level) || level < MIN_LEVEL || level > MAX_LEVEL) {
+      errors.characterLevel = `Level must be a whole number from ${MIN_LEVEL} to ${MAX_LEVEL}.`
+    }
+    return errors
+  }
 }
