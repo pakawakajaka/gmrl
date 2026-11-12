@@ -30,15 +30,15 @@ function currentView() {
 
 function render() {
   const { view, id } = currentView()
-  const character = view === 'edit' || view === 'character' ? account.getCharacter(id) : undefined
+  const character = view === 'character' ? account.getCharacter(id) : undefined
   const focusKey = document.activeElement?.dataset?.focusKey
 
   document.getElementById('accountName').textContent = account.accountName
 
-  if (view === 'character' && character) {
-    app.replaceChildren(renderCharacterSheet({ character }))
-  } else if (view === 'create' || character) {
-    app.replaceChildren(renderCharacterForm({ account, character, onSave: handleSave }))
+  if (character) {
+    app.replaceChildren(renderCharacterSheet({ character, onDelete: handleDelete }))
+  } else if (view === 'create') {
+    app.replaceChildren(renderCharacterForm({ account, onSave: handleSave }))
   } else if (view === 'farm') {
     app.replaceChildren(renderFarm({
       account,
@@ -52,7 +52,6 @@ function render() {
       account,
       selectedGuild,
       onSelectGuild: handleSelectGuild,
-      onDelete: handleDelete,
       onReset: handleReset,
       onSaveToFile: handleSaveToFile,
     }))
@@ -104,7 +103,7 @@ function reportUpgrades(upgrades) {
     notify(`${character.characterName} equipped `, el('a', { href: `#/character/${character.id}` }, `[${getItem(item).name}]`), '.')
   }
   const more = upgrades.length - MAX_UPGRADE_NOTICES
-  if (more > 0) notify(`…and ${more} more gear upgrade${more === 1 ? '' : 's'}. Open a character sheet to see them.`)
+  if (more > 0) notify(`…and ${more} more gear upgrade${more === 1 ? '' : 's'}. Open a character page to see them.`)
 }
 
 function gameTick() {
@@ -112,7 +111,7 @@ function gameTick() {
   reportLevelUps(levelUps)
   reportUpgrades(upgrades)
   if (levelUps.length || upgrades.length) {
-    render()
+    if (!app.querySelector('dialog[open]')) render() // don't close an open modal; the next render catches up
     save()
   } else if (currentView().view === 'farm') {
     updateFarm(app, account)
@@ -122,7 +121,7 @@ function gameTick() {
 }
 
 function handleSave(character, guildNames) {
-  account.saveCharacter(character, guildNames)
+  account.addCharacter(character, guildNames)
   save()
   location.hash = '#/roster'
 }
@@ -150,10 +149,10 @@ function handleRecall(characterId) {
 }
 
 function handleDelete(character) {
-  if (!confirm(`Delete ${character.characterName}? This can't be undone.`)) return
   account.deleteCharacter(character.id)
   save()
-  render()
+  notify(`${character.characterName} was deleted.`)
+  location.hash = '#/roster'
 }
 
 async function handleSaveToFile(event) {

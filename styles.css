@@ -194,6 +194,31 @@ main:has(.farm) {
 
 /* Buttons */
 
+.modal {
+  max-width: min(26rem, calc(100vw - 2rem));
+  padding: 1.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.modal::backdrop {
+  background: rgb(0 0 0 / 0.6);
+}
+
+.modal p {
+  margin-top: 0.75rem;
+  color: var(--text-muted);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1.5rem;
+}
+
 .button {
   display: inline-flex;
   align-items: center;
@@ -379,10 +404,16 @@ main:has(.farm) {
 .badge-contested { --badge-color: var(--text-muted); }
 .badge-sanctuary { --badge-color: var(--healer); }
 
-.card-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
+.card-link {
+  height: 100%;
+  color: inherit;
+  text-decoration: none;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+
+.card-link:hover {
+  border-color: var(--class-color);
+  background: var(--surface-raised);
 }
 
 .empty {

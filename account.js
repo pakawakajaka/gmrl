@@ -59,36 +59,22 @@ export default class Account {
     return this.guilds.filter((g) => g.has(characterId))
   }
 
-  isNameTaken(name, exceptId) {
+  isNameTaken(name) {
     const wanted = name.trim().toLowerCase()
-    return this.characters.some((c) => c.id !== exceptId && c.characterName.toLowerCase() === wanted)
+    return this.characters.some((c) => c.characterName.toLowerCase() === wanted)
   }
 
-  // Adds or replaces the character and sets its guild memberships to exactly `guildNames`.
-  // New characters always start at level 1 with no XP or gear. Edits can't change level: level, XP, gear,
-  // quests and the farming zone (if still allowed) carry over from the saved character.
-  saveCharacter(character, guildNames, now = Date.now()) {
+  // Adds a new character and puts it in exactly `guildNames`. New characters always start at level 1
+  // with no XP or gear. Characters can't be edited after creation.
+  addCharacter(character, guildNames, now = Date.now()) {
     this.tick(now)
-    const index = this.characters.findIndex((c) => c.id === character.id)
-    if (index === -1) {
-      character.characterLevel = MIN_LEVEL
-      character.characterXp = 0
-      character.zone = null
-      this.characters.push(character)
-    } else {
-      const previous = this.characters[index]
-      character.characterLevel = previous.characterLevel
-      character.characterXp = previous.characterXp
-      character.zone = zoneLockReason(character, getZone(previous.zone)) ? null : previous.zone
-      for (const key of ['equipment', 'bag', 'questsDone', 'questProgress', 'killProgress', 'lootLog']) character[key] = previous[key]
-      if (character.zone !== previous.zone) character.questProgress = 0
-      character.equipBest()
-      this.characters[index] = character
-    }
+    character.characterLevel = MIN_LEVEL
+    character.characterXp = 0
+    character.zone = null
+    this.characters.push(character)
 
     for (const guild of this.guilds) {
       if (guildNames.includes(guild.guildName)) guild.add(character.id)
-      else guild.remove(character.id)
     }
   }
 

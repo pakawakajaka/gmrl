@@ -1,7 +1,7 @@
 import { badge, el } from './dom.js'
 import { ROLES } from './data.js'
 
-export function renderRoster({ account, selectedGuild, onSelectGuild, onDelete, onReset, onSaveToFile }) {
+export function renderRoster({ account, selectedGuild, onSelectGuild, onReset, onSaveToFile }) {
   const guild = account.getGuild(selectedGuild)
   const characters = sortForRaid(guild ? account.characters.filter((c) => guild.has(c.id)) : account.characters)
 
@@ -13,7 +13,7 @@ export function renderRoster({ account, selectedGuild, onSelectGuild, onDelete, 
     renderGuildFilter(account, guild, onSelectGuild),
     renderRoleSummary(characters),
     characters.length
-      ? el('ul', { class: 'character-list' }, characters.map((c) => renderCharacterCard(c, account, onDelete)))
+      ? el('ul', { class: 'character-list' }, characters.map((c) => renderCharacterCard(c, account)))
       : el('p', { class: 'empty' }, 'No characters here yet. ', el('a', { href: '#/create' }, 'Create one'), '.'),
     el('footer', { class: 'view-footer' },
       el('button', { type: 'button', class: 'button subtle', onclick: onSaveToFile }, 'Save to file'),
@@ -52,23 +52,19 @@ function renderRoleSummary(characters) {
   )
 }
 
-function renderCharacterCard(character, account, onDelete) {
+function renderCharacterCard(character, account) {
   const guildNames = account.guildsOf(character.id).map((g) => `<${g.guildName}>`)
-  const name = character.characterName
 
-  return el('li', { class: 'character-card', style: { '--class-color': character.classColor } },
-    el('img', { class: 'class-icon', src: character.classIcon, alt: '', width: 56, height: 56 }),
-    el('div', { class: 'character-info' },
-      el('h3', { class: 'character-name' }, name),
-      el('p', {}, `Level ${character.characterLevel} ${character.characterRace} ${character.characterSpec} ${character.characterClass}`),
-      el('p', { class: 'badges' }, badge(character.characterRole), badge(character.faction)),
-      el('p', { class: 'guild-tags' }, guildNames.length ? guildNames.join(', ') : 'No guild'),
-      el('p', { class: 'farm-status' }, character.zone ? `Farming in ${character.zone}` : 'Idle'),
-    ),
-    el('div', { class: 'card-actions' },
-      el('a', { class: 'button small', href: `#/character/${character.id}`, 'aria-label': `Character sheet for ${name}` }, 'Gear'),
-      el('a', { class: 'button small', href: `#/edit/${character.id}`, 'aria-label': `Edit ${name}` }, 'Edit'),
-      el('button', { type: 'button', class: 'button small danger', 'aria-label': `Delete ${name}`, onclick: () => onDelete(character) }, 'Delete'),
+  return el('li', {},
+    el('a', { class: 'character-card card-link', href: `#/character/${character.id}`, style: { '--class-color': character.classColor } },
+      el('img', { class: 'class-icon', src: character.classIcon, alt: '', width: 56, height: 56 }),
+      el('div', { class: 'character-info' },
+        el('h3', { class: 'character-name' }, character.characterName),
+        el('p', {}, `Level ${character.characterLevel} ${character.characterRace} ${character.characterSpec} ${character.characterClass}`),
+        el('p', { class: 'badges' }, badge(character.characterRole), badge(character.faction)),
+        el('p', { class: 'guild-tags' }, guildNames.length ? guildNames.join(', ') : 'No guild'),
+        el('p', { class: 'farm-status' }, character.zone ? `Farming in ${character.zone}` : 'Idle'),
+      ),
     ),
   )
 }

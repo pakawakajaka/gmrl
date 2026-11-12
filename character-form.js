@@ -4,26 +4,24 @@ import { CLASSES, FACTIONS, MIN_LEVEL, RACES, ROLES, classIcon } from './data.js
 
 const FIELD_ORDER = ['characterName', 'characterRace', 'characterClass', 'characterSpec', 'characterRole']
 
-// Renders the create/edit screen. Pass `character` to edit an existing one.
-export function renderCharacterForm({ account, character, onSave }) {
-  const isEditing = Boolean(character)
-  const level = character?.characterLevel ?? MIN_LEVEL // new characters always start at level 1
-  const memberOf = new Set(isEditing ? account.guildsOf(character.id).map((g) => g.guildName) : [])
+// Renders the create screen. Characters can't be edited after creation.
+export function renderCharacterForm({ account, onSave }) {
+  const level = MIN_LEVEL // new characters always start at level 1
 
   // Race, class, spec and role can be picked in any order; a pick clears whatever it conflicts with.
   const picks = {
-    characterRace: character?.characterRace ?? '',
-    characterClass: character?.characterClass ?? '',
-    characterSpec: character?.characterSpec ?? '',
-    characterRole: character?.characterRole ?? '',
+    characterRace: '',
+    characterClass: '',
+    characterSpec: '',
+    characterRole: '',
   }
 
   const nameInput = el('input', {
     id: 'characterName', type: 'text', maxlength: 12, autocomplete: 'off', spellcheck: 'false',
-    'data-autofocus': true, value: character?.characterName,
+    'data-autofocus': true,
   })
   const guildBoxes = account.guilds.map((g) =>
-    el('input', { type: 'checkbox', value: g.guildName, checked: memberOf.has(g.guildName) }))
+    el('input', { type: 'checkbox', value: g.guildName }))
 
   const racePicker = el('div', { class: 'faction-columns' }, FACTIONS.map((faction) =>
     el('div', { class: `faction faction-${faction.toLowerCase()}` },
@@ -149,7 +147,7 @@ export function renderCharacterForm({ account, character, onSave }) {
       characterLevel: level,
     }
     const errors = Character.validate(values)
-    if (!errors.characterName && account.isNameTaken(values.characterName, character?.id)) {
+    if (!errors.characterName && account.isNameTaken(values.characterName)) {
       errors.characterName = `You already have a character named ${Character.formatName(values.characterName)}.`
     }
 
@@ -164,7 +162,7 @@ export function renderCharacterForm({ account, character, onSave }) {
     }
 
     const guildNames = guildBoxes.filter((box) => box.checked).map((box) => box.value)
-    onSave(new Character({ ...values, id: character?.id }), guildNames)
+    onSave(new Character(values), guildNames)
   }
 
   const form = el('form', { class: 'character-form', novalidate: true, onsubmit: handleSubmit, oninput: handleInput, onchange: handleChange, onclick: handleClick },
@@ -180,7 +178,7 @@ export function renderCharacterForm({ account, character, onSave }) {
         guildBoxes.map((box) => el('label', { class: 'checkbox' }, box, box.value)),
       ),
       el('div', { class: 'form-actions' },
-        el('button', { type: 'submit', class: 'button primary' }, isEditing ? 'Save Changes' : 'Create Character'),
+        el('button', { type: 'submit', class: 'button primary' }, 'Create Character'),
         el('a', { class: 'button', href: '#/roster' }, 'Cancel'),
       ),
     ),
@@ -195,8 +193,8 @@ export function renderCharacterForm({ account, character, onSave }) {
 
   return el('section', { class: 'character-editor', 'aria-labelledby': 'view-title' },
     el('div', { class: 'view-header' },
-      el('h2', { id: 'view-title' }, isEditing ? `Edit ${character.characterName}` : 'Create Character'),
-      !isEditing && el('p', { class: 'field-hint' }, `New characters start at level ${MIN_LEVEL}. Send them farming to level up.`),
+      el('h2', { id: 'view-title' }, 'Create Character'),
+      el('p', { class: 'field-hint' }, `New characters start at level ${MIN_LEVEL}. Send them farming to level up. Name, race, class, spec, role and guilds can't be changed later.`),
     ),
     form,
   )

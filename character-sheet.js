@@ -14,8 +14,9 @@ const signed = (n) => `${n >= 0 ? '+' : ''}${n}`
 const pct = (n) => `${n.toFixed(2)}%`
 const ICON_URL = 'https://wow.zamimg.com/images/wow/icons/large/'
 
-export function renderCharacterSheet({ character }) {
+export function renderCharacterSheet({ character, onDelete }) {
   const stats = characterStats(character)
+  const deleteDialog = renderDeleteDialog(character, onDelete)
   return el('section', { class: 'character-sheet', style: { '--class-color': character.classColor }, 'aria-labelledby': 'view-title' },
     el('div', { class: 'view-header' },
       el('div', {},
@@ -23,8 +24,8 @@ export function renderCharacterSheet({ character }) {
         el('p', { class: 'sheet-subtitle' }, `Level ${character.characterLevel} ${character.characterRace} ${character.characterSpec} ${character.characterClass}`),
       ),
       el('div', { class: 'sheet-actions' },
-        el('a', { class: 'button small', href: `#/edit/${character.id}` }, 'Edit'),
         el('a', { class: 'button small', href: '#/roster' }, 'Back to roster'),
+        el('button', { type: 'button', class: 'button small danger', onclick: () => deleteDialog.showModal() }, 'Delete'),
       ),
     ),
     el('div', { class: 'sheet-layout' },
@@ -35,7 +36,20 @@ export function renderCharacterSheet({ character }) {
       renderProgress(character),
       renderBag(character),
     ),
+    deleteDialog,
   )
+}
+
+function renderDeleteDialog(character, onDelete) {
+  const dialog = el('dialog', { class: 'modal', 'aria-labelledby': 'delete-title', 'aria-describedby': 'delete-text' },
+    el('h3', { id: 'delete-title' }, `Delete ${character.characterName}?`),
+    el('p', { id: 'delete-text' }, 'This permanently removes the character, their gear and progress. This can\'t be undone.'),
+    el('div', { class: 'modal-actions' },
+      el('button', { type: 'button', class: 'button', autofocus: true, onclick: () => dialog.close() }, 'Cancel'),
+      el('button', { type: 'button', class: 'button danger', onclick: () => { dialog.close(); onDelete(character) } }, 'Delete character'),
+    ),
+  )
+  return dialog
 }
 
 function renderPaperDoll(character) {
