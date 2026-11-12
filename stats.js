@@ -152,18 +152,15 @@ export function characterStats(character) {
     blockValue: blocks ? Math.max(0, Math.trunc((shield.block ?? 0) + (bonus.blockValue ?? 0) + str / 20 - 1)) : 0,
   }
 
-  let spell = null
-  if (baseMana > 0) {
-    const [critBase, rate0, rate1] = SPELL_CRIT[cls] ?? [0, 0, 10]
-    spell = {
-      damage: bonus.spellDamage ?? 0,
-      schoolDamage: Object.fromEntries(SCHOOLS.map((s) => [s, bonus[`${s}Damage`] ?? 0]).filter(([, v]) => v)),
-      healing: bonus.healing ?? 0,
-      crit: (SPELL_CRIT[cls] ? critBase + int / (rate0 + rate1 * level) : 0) + (bonus.spellCrit ?? 0),
-      hit: bonus.spellHit ?? 0,
-      regen: manaRegenPerSecond(cls, spi) * 5,
-      mp5: bonus.mp5 ?? 0,
-    }
+  const [critBase, rate0, rate1] = SPELL_CRIT[cls] ?? [0, 0, 10]
+  const spell = {
+    damage: bonus.spellDamage ?? 0,
+    schoolDamage: Object.fromEntries(SCHOOLS.map((s) => [s, bonus[`${s}Damage`] ?? 0]).filter(([, v]) => v)),
+    healing: bonus.healing ?? 0,
+    crit: (SPELL_CRIT[cls] ? critBase + int / (rate0 + rate1 * level) : 0) + (bonus.spellCrit ?? 0),
+    hit: bonus.spellHit ?? 0,
+    regen: manaRegenPerSecond(cls, spi) * 5,
+    mp5: bonus.mp5 ?? 0,
   }
 
   return { stats, health, mana, melee, ranged, defenses, spell, resist, hp5: bonus.hp5 ?? 0 }

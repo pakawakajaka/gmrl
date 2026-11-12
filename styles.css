@@ -775,6 +775,55 @@ input[type="number"] {
   color: var(--text-muted);
 }
 
+/* Yellow "!" in the style of a WoW quest giver; shows its text on hover or keyboard focus. */
+.quest-hint {
+  position: relative;
+  display: inline-block;
+  vertical-align: middle;
+  cursor: help;
+  border-radius: 4px;
+}
+
+.quest-hint:focus-visible {
+  outline: 2px solid var(--accent);
+}
+
+.quest-mark {
+  display: block;
+  padding: 0 0.3rem;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 1.6rem;
+  font-weight: 900;
+  line-height: 1;
+  color: #ffd100;
+  -webkit-text-stroke: 1px #3a2400;
+  text-shadow: 0 0 2px #000, 1px 2px 2px rgb(0 0 0 / 0.8), 0 0 8px rgb(255 209 0 / 0.45);
+}
+
+.hint-text {
+  position: absolute;
+  z-index: 20;
+  top: 100%;
+  left: 50%;
+  display: none;
+  width: max-content;
+  max-width: 320px;
+  margin-top: 0.35rem;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid #9a9a9a;
+  border-radius: 6px;
+  background: rgb(4 4 20 / 0.96);
+  color: #ffffff;
+  font-size: 0.85rem;
+  line-height: 1.35;
+  transform: translateX(-50%);
+}
+
+.quest-hint:hover > .hint-text,
+.quest-hint:focus > .hint-text {
+  display: block;
+}
+
 /* Side by side when there's room; stacked on narrow screens. */
 .continents {
   display: grid;

@@ -1,4 +1,4 @@
-import { el, formatDuration } from './dom.js'
+import { el, formatDuration, formatNumber, money } from './dom.js'
 import { CLASS_BITS, INVENTORY_TYPES, QUALITIES, QUEST_HOURS, RACE_BITS, SLOTS, getItem, itemTypeName } from './gear.js'
 import { SCHOOLS, STAT_NAMES, characterStats } from './stats.js'
 
@@ -124,14 +124,20 @@ export function renderTooltip(item) {
 function renderStats(character, s) {
   const group = (title, rows) => el('section', { class: 'stat-group' },
     el('h3', {}, title),
-    el('dl', {}, rows.filter(Boolean).map(([label, value]) => [el('dt', {}, label), el('dd', {}, String(value))])),
+    el('dl', {}, rows.filter(Boolean).map(([label, value]) => [el('dt', {}, label), el('dd', {}, value)])),
   )
   const damage = (d) => `${Math.floor(d.min)} - ${Math.floor(d.max)}`
   const { melee, ranged, defenses, spell } = s
+  const rates = character.rates
   return el('section', { class: 'sheet-stats', 'aria-label': 'Stats' },
     group('Power', [
       ['Power Level', Math.round(character.power.solo)],
       ['Item Level', Math.floor(character.itemLevel)],
+    ]),
+    group('Farm', [
+      ['Kills / hr', rates ? formatNumber(rates.killsPerHour) : '—'],
+      ['Gold / hr', rates ? money(rates.copperPerHour) : '—'],
+      ['XP / hr', rates?.xpPerHour > 0 ? formatNumber(rates.xpPerHour) : '—'],
     ]),
     group('Base Stats', [
       ...Object.entries(STAT_NAMES).map(([key, name]) => [name, s.stats[key].total]),
@@ -147,20 +153,20 @@ function renderStats(character, s) {
       ['Crit Chance', pct(melee.crit)],
       ['Hit Bonus', pct(melee.hit)],
     ]),
-    ranged && group(ranged.isWand ? 'Wand' : 'Ranged', [
+    ranged ? group(ranged.isWand ? 'Wand' : 'Ranged', [
       ['Damage', damage(ranged)],
       ['Speed', ranged.speed.toFixed(2)],
       ['DPS', ranged.dps.toFixed(1)],
       !ranged.isWand && ['Attack Power', ranged.attackPower],
       !ranged.isWand && ['Crit Chance', pct(ranged.crit)],
-    ]),
-    spell && group('Spell', [
+    ]) : group('Ranged', ['Damage', 'Speed', 'DPS', 'Attack Power', 'Crit Chance'].map((label) => [label, '—'])),
+    group('Spell', [
       ['Bonus Damage', spell.damage],
       ...Object.entries(spell.schoolDamage).map(([school, value]) => [`${capitalize(school)} Damage`, `+${value}`]),
       ['Bonus Healing', spell.healing],
       ['Crit Chance', pct(spell.crit)],
       ['Hit Bonus', pct(spell.hit)],
-      ['Mana Regen', `${Math.floor(spell.regen)} per 5 sec (not casting)`],
+      ['Mana Regen', s.mana > 0 ? `${Math.floor(spell.regen)} per 5 sec (not casting)` : '—'],
       spell.mp5 > 0 && ['Mana per 5 sec', spell.mp5],
     ]),
     group('Defense', [
@@ -173,7 +179,7 @@ function renderStats(character, s) {
       s.hp5 > 0 && ['Health per 5 sec', s.hp5],
     ]),
     group('Resistances', SCHOOLS.map((school) => [capitalize(school), s.resist[school]])),
-    el('p', { class: 'note' }, 'Power level sets farming speed. Item level is the average of worn gear (empty slots count as 0). Stats are without talents or buffs.'),
+    el('p', { class: 'note' }, 'Power level sets farming speed. Item level is the average of worn gear (empty slots count as 0). Farm rates are for the current zone. Stats are without talents or buffs.'),
   )
 }
 
