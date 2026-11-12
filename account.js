@@ -15,15 +15,16 @@ export default class Account {
     this.lastTick = lastTick // ms timestamp up to which farming has been paid out
   }
 
-  // Pays out farming from `lastTick` to `now`. Returns what was earned and who leveled up.
+  // Pays out farming from `lastTick` to `now`. Returns what was earned, who leveled up and new gear worn.
   tick(now = Date.now()) {
     const hours = Math.max(0, now - this.lastTick) / MS_PER_HOUR
     this.lastTick = Math.max(this.lastTick, now)
-    const result = { hours, copper: 0, levelUps: [] }
+    const result = { hours, copper: 0, levelUps: [], upgrades: [] }
     for (const character of this.characters) {
-      const { copper, levels } = character.farm(hours)
+      const { copper, levels, upgrades } = character.farm(hours, now)
       result.copper += copper
       if (levels > 0) result.levelUps.push(character)
+      for (const item of upgrades) result.upgrades.push({ character, item })
     }
     this.gold += result.copper
     return result
@@ -33,6 +34,7 @@ export default class Account {
     const character = this.getCharacter(characterId)
     if (!character || zoneLockReason(character, getZone(zoneName))) return false
     this.tick(now)
+    if (character.zone !== zoneName) character.questProgress = 0
     character.zone = zoneName
     return true
   }
@@ -42,6 +44,7 @@ export default class Account {
     if (!character) return
     this.tick(now)
     character.zone = null
+    character.questProgress = 0
   }
 
   getCharacter(id) {
@@ -62,8 +65,8 @@ export default class Account {
   }
 
   // Adds or replaces the character and sets its guild memberships to exactly `guildNames`.
-  // New characters always start at level 1 with no XP. Edits can't change level: level, XP and the
-  // farming zone (if still allowed) carry over from the saved character.
+  // New characters always start at level 1 with no XP or gear. Edits can't change level: level, XP, gear,
+  // quests and the farming zone (if still allowed) carry over from the saved character.
   saveCharacter(character, guildNames, now = Date.now()) {
     this.tick(now)
     const index = this.characters.findIndex((c) => c.id === character.id)
@@ -77,6 +80,9 @@ export default class Account {
       character.characterLevel = previous.characterLevel
       character.characterXp = previous.characterXp
       character.zone = zoneLockReason(character, getZone(previous.zone)) ? null : previous.zone
+      for (const key of ['equipment', 'bag', 'questsDone', 'questProgress', 'killProgress', 'lootLog']) character[key] = previous[key]
+      if (character.zone !== previous.zone) character.questProgress = 0
+      character.equipBest()
       this.characters[index] = character
     }
 
@@ -98,10 +104,11 @@ export default class Account {
       .map((c) => ({ ...c, characterSpec: c.characterSpec ?? defaultSpec(c.characterClass, c.characterRole) }))
       .filter((c) => Object.keys(Character.validate(c)).length === 0)
       .map((c) => {
-        const character = new Character({ ...c, characterXp: 0, zone: null })
+        const character = new Character({ ...c, characterXp: 0, zone: null, equipment: {}, bag: [], questsDone: [], questProgress: 0, killProgress: 0, lootLog: [] })
         const xp = Number(c.characterXp)
         if (Number.isFinite(xp) && xp > 0 && xp < character.xpToNextLevel) character.characterXp = xp
         if (!zoneLockReason(character, getZone(c.zone))) character.zone = c.zone
+        character.restoreGear(c)
         return character
       })
     const ids = new Set(characters.map((c) => c.id))

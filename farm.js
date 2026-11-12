@@ -61,6 +61,7 @@ function renderFarmer(character, isSelected, onSelect, onRecall) {
       el('span', { class: 'xp-text' }),
       el('span', { class: 'eta' }),
     ),
+    el('a', { class: 'farmer-gear', href: `#/character/${character.id}`, 'aria-label': `Character sheet for ${name}` }, 'Gear and stats'),
     character.zone && el('button', {
       type: 'button',
       class: 'button small subtle farmer-recall',

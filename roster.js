@@ -66,6 +66,7 @@ function renderCharacterCard(character, account, onDelete) {
       el('p', { class: 'farm-status' }, character.zone ? `Farming in ${character.zone}` : 'Idle'),
     ),
     el('div', { class: 'card-actions' },
+      el('a', { class: 'button small', href: `#/character/${character.id}`, 'aria-label': `Character sheet for ${name}` }, 'Gear'),
       el('a', { class: 'button small', href: `#/edit/${character.id}`, 'aria-label': `Edit ${name}` }, 'Edit'),
       el('button', { type: 'button', class: 'button small danger', 'aria-label': `Delete ${name}`, onclick: () => onDelete(character) }, 'Delete'),
     ),

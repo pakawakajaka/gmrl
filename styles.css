@@ -811,3 +811,280 @@ input[type="number"] {
     grid-template-columns: 1fr;
   }
 }
+
+.farmer-gear {
+  justify-self: start;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+/* Character sheet */
+
+main:has(.character-sheet) {
+  max-width: 1200px;
+}
+
+.sheet-subtitle {
+  color: var(--text-muted);
+}
+
+.sheet-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.sheet-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  gap: 1.5rem;
+  margin-bottom: 1.5rem;
+  align-items: start;
+}
+
+.paper-doll,
+.sheet-stats,
+.sheet-panel {
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--class-color);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.paper-doll {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 0.75rem;
+}
+
+.slot-column,
+.slot-row,
+.loot-log,
+.bag {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.slot-row {
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.doll-center {
+  display: grid;
+  align-content: start;
+  justify-items: center;
+  gap: 0.5rem;
+  width: 120px;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+/* WoW item quality colors */
+.q-empty { --quality: var(--border); }
+.q-poor { --quality: #9d9d9d; }
+.q-common { --quality: #ffffff; }
+.q-uncommon { --quality: #1eff00; }
+.q-rare { --quality: #0070dd; }
+.q-epic { --quality: #a335ee; }
+
+.slot {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  padding: 0.25rem;
+  border-radius: 6px;
+  background: var(--surface-raised);
+}
+
+.slot:focus-visible {
+  outline: 2px solid var(--accent);
+}
+
+.slot-right {
+  flex-direction: row-reverse;
+  text-align: right;
+}
+
+.item-icon {
+  position: relative;
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  overflow: hidden;
+  border: 2px solid var(--quality);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.item-icon img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.icon-fallback {
+  font-weight: 700;
+  color: var(--quality);
+}
+
+.q-empty .icon-fallback {
+  color: var(--text-muted);
+}
+
+.slot-text {
+  display: grid;
+  min-width: 0;
+}
+
+.slot-name {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.item-name {
+  overflow: hidden;
+  font-size: 0.85rem;
+  color: var(--quality);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.q-empty .item-name {
+  color: var(--text-muted);
+}
+
+/* Classic-style item tooltip, shown on hover or keyboard focus. */
+.tooltip {
+  position: absolute;
+  z-index: 20;
+  display: none;
+  width: max-content;
+  max-width: 320px;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid #9a9a9a;
+  border-radius: 6px;
+  background: rgb(4 4 20 / 0.96);
+  color: #ffffff;
+  font-size: 0.85rem;
+  line-height: 1.35;
+  text-align: left;
+  white-space: normal;
+  pointer-events: none;
+}
+
+.slot:hover > .tooltip,
+.slot:focus > .tooltip {
+  display: block;
+}
+
+.slot-left .tooltip { top: 0; left: 100%; margin-left: 0.5rem; }
+.slot-right .tooltip { top: 0; right: 100%; margin-right: 0.5rem; }
+.slot-bottom .tooltip { bottom: 100%; left: 0; margin-bottom: 0.5rem; }
+
+.tooltip p {
+  margin: 0;
+}
+
+.tooltip .split {
+  display: flex;
+  justify-content: space-between;
+  gap: 2rem;
+}
+
+.tt-name {
+  font-size: 1rem;
+  color: var(--quality);
+}
+
+.tt-effect {
+  color: #1eff00;
+}
+
+.tt-description {
+  color: #ffd100;
+}
+
+.sheet-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 1rem 1.5rem;
+}
+
+.stat-group h3,
+.sheet-panel h3 {
+  margin-bottom: 0.35rem;
+  font-size: 0.95rem;
+  color: var(--accent);
+}
+
+.stat-group dl {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 0.1rem 1rem;
+  margin: 0;
+  font-size: 0.875rem;
+}
+
+.stat-group dt {
+  color: var(--text-muted);
+}
+
+.stat-group dd {
+  margin: 0;
+  text-align: right;
+}
+
+.note {
+  grid-column: 1 / -1;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.sheet-panel {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.sheet-panel .empty {
+  padding: 1rem;
+}
+
+.loot-source {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.bag {
+  grid-template-columns: repeat(auto-fill, 48px);
+}
+
+@media (max-width: 900px) {
+  .sheet-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .paper-doll {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .doll-center {
+    display: none;
+  }
+
+  .slot-row {
+    grid-template-columns: 1fr;
+  }
+}

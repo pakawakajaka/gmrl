@@ -1,7 +1,9 @@
 import { renderCharacterForm } from './character-form.js'
+import { renderCharacterSheet } from './character-sheet.js'
 import { MAX_LEVEL } from './data.js'
 import { el, formatDuration, formatMoney, money } from './dom.js'
 import { renderFarm, updateFarm } from './farm.js'
+import { getItem } from './gear.js'
 import { renderRoster } from './roster.js'
 import { createDefaultAccount, loadAccount, saveAccount, saveAccountToFile } from './storage.js'
 
@@ -9,6 +11,7 @@ const APP_TITLE = 'Guild Master Raid Leader'
 const TICK_MS = 1000
 const SAVE_EVERY_MS = 15000
 const MAX_NOTICES = 4
+const MAX_UPGRADE_NOTICES = 3
 
 const app = document.getElementById('app')
 const goldEl = document.getElementById('gold')
@@ -27,12 +30,14 @@ function currentView() {
 
 function render() {
   const { view, id } = currentView()
-  const character = view === 'edit' ? account.getCharacter(id) : undefined
+  const character = view === 'edit' || view === 'character' ? account.getCharacter(id) : undefined
   const focusKey = document.activeElement?.dataset?.focusKey
 
   document.getElementById('accountName').textContent = account.accountName
 
-  if (view === 'create' || character) {
+  if (view === 'character' && character) {
+    app.replaceChildren(renderCharacterSheet({ character }))
+  } else if (view === 'create' || character) {
     app.replaceChildren(renderCharacterForm({ account, character, onSave: handleSave }))
   } else if (view === 'farm') {
     app.replaceChildren(renderFarm({
@@ -94,10 +99,19 @@ function reportLevelUps(levelUps) {
   }
 }
 
+function reportUpgrades(upgrades) {
+  for (const { character, item } of upgrades.slice(0, MAX_UPGRADE_NOTICES)) {
+    notify(`${character.characterName} equipped `, el('a', { href: `#/character/${character.id}` }, `[${getItem(item).name}]`), '.')
+  }
+  const more = upgrades.length - MAX_UPGRADE_NOTICES
+  if (more > 0) notify(`…and ${more} more gear upgrade${more === 1 ? '' : 's'}. Open a character sheet to see them.`)
+}
+
 function gameTick() {
-  const { levelUps } = account.tick()
+  const { levelUps, upgrades } = account.tick()
   reportLevelUps(levelUps)
-  if (levelUps.length) {
+  reportUpgrades(upgrades)
+  if (levelUps.length || upgrades.length) {
     render()
     save()
   } else if (currentView().view === 'farm') {
@@ -169,8 +183,9 @@ function handleReset() {
 // Pay out anything earned while the page was closed.
 const away = account.tick()
 if (away.hours >= 1 / 60 && (away.copper >= 1 || away.levelUps.length)) {
-  notify(`Welcome back! While you were away for ${formatDuration(away.hours)}, your characters earned ${formatMoney(away.copper)}.`)
+  reportUpgrades(away.upgrades)
   reportLevelUps(away.levelUps)
+  notify(`Welcome back! While you were away for ${formatDuration(away.hours)}, your characters earned ${formatMoney(away.copper)}${away.upgrades.length ? ` and equipped ${away.upgrades.length} new item${away.upgrades.length === 1 ? '' : 's'}` : ''}.`)
   save()
 }
 if (loaded.dropped > 0) {
