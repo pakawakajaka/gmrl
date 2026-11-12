@@ -1,7 +1,7 @@
 import { badge, el } from './dom.js'
 import { ROLES } from './data.js'
 
-export function renderRoster({ account, selectedGuild, onSelectGuild, onDelete, onReset }) {
+export function renderRoster({ account, selectedGuild, onSelectGuild, onDelete, onReset, onSaveToFile }) {
   const guild = account.getGuild(selectedGuild)
   const characters = sortForRaid(guild ? account.characters.filter((c) => guild.has(c.id)) : account.characters)
 
@@ -16,6 +16,7 @@ export function renderRoster({ account, selectedGuild, onSelectGuild, onDelete, 
       ? el('ul', { class: 'character-list' }, characters.map((c) => renderCharacterCard(c, account, onDelete)))
       : el('p', { class: 'empty' }, 'No characters here yet. ', el('a', { href: '#/create' }, 'Create one'), '.'),
     el('footer', { class: 'view-footer' },
+      el('button', { type: 'button', class: 'button subtle', onclick: onSaveToFile }, 'Save to file'),
       el('button', { type: 'button', class: 'button subtle', onclick: onReset }, 'Reset to default data'),
     ),
   )
@@ -62,6 +63,7 @@ function renderCharacterCard(character, account, onDelete) {
       el('p', {}, `Level ${character.characterLevel} ${character.characterRace} ${character.characterSpec} ${character.characterClass}`),
       el('p', { class: 'badges' }, badge(character.characterRole), badge(character.faction)),
       el('p', { class: 'guild-tags' }, guildNames.length ? guildNames.join(', ') : 'No guild'),
+      el('p', { class: 'farm-status' }, character.zone ? `Farming in ${character.zone}` : 'Idle'),
     ),
     el('div', { class: 'card-actions' },
       el('a', { class: 'button small', href: `#/edit/${character.id}`, 'aria-label': `Edit ${name}` }, 'Edit'),

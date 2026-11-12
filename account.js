@@ -1,14 +1,47 @@
 import Character from './character.js'
 import Guild from './guild.js'
-import { defaultSpec } from './data.js'
+import { MIN_LEVEL, defaultSpec } from './data.js'
+import { getZone, zoneLockReason } from './zones.js'
 
 const ID_PATTERN = /^[\w-]+$/
+const MS_PER_HOUR = 3600 * 1000
 
 export default class Account {
-  constructor(accountName, characters = [], guilds = []) {
+  constructor(accountName, characters = [], guilds = [], gold = 0, lastTick = Date.now()) {
     this.accountName = accountName
     this.characters = characters
     this.guilds = guilds
+    this.gold = gold // in copper; may be fractional between ticks
+    this.lastTick = lastTick // ms timestamp up to which farming has been paid out
+  }
+
+  // Pays out farming from `lastTick` to `now`. Returns what was earned and who leveled up.
+  tick(now = Date.now()) {
+    const hours = Math.max(0, now - this.lastTick) / MS_PER_HOUR
+    this.lastTick = Math.max(this.lastTick, now)
+    const result = { hours, copper: 0, levelUps: [] }
+    for (const character of this.characters) {
+      const { copper, levels } = character.farm(hours)
+      result.copper += copper
+      if (levels > 0) result.levelUps.push(character)
+    }
+    this.gold += result.copper
+    return result
+  }
+
+  sendToZone(characterId, zoneName, now = Date.now()) {
+    const character = this.getCharacter(characterId)
+    if (!character || zoneLockReason(character, getZone(zoneName))) return false
+    this.tick(now)
+    character.zone = zoneName
+    return true
+  }
+
+  recall(characterId, now = Date.now()) {
+    const character = this.getCharacter(characterId)
+    if (!character) return
+    this.tick(now)
+    character.zone = null
   }
 
   getCharacter(id) {
@@ -29,10 +62,23 @@ export default class Account {
   }
 
   // Adds or replaces the character and sets its guild memberships to exactly `guildNames`.
-  saveCharacter(character, guildNames) {
+  // New characters always start at level 1 with no XP. Edits can't change level: level, XP and the
+  // farming zone (if still allowed) carry over from the saved character.
+  saveCharacter(character, guildNames, now = Date.now()) {
+    this.tick(now)
     const index = this.characters.findIndex((c) => c.id === character.id)
-    if (index === -1) this.characters.push(character)
-    else this.characters[index] = character
+    if (index === -1) {
+      character.characterLevel = MIN_LEVEL
+      character.characterXp = 0
+      character.zone = null
+      this.characters.push(character)
+    } else {
+      const previous = this.characters[index]
+      character.characterLevel = previous.characterLevel
+      character.characterXp = previous.characterXp
+      character.zone = zoneLockReason(character, getZone(previous.zone)) ? null : previous.zone
+      this.characters[index] = character
+    }
 
     for (const guild of this.guilds) {
       if (guildNames.includes(guild.guildName)) guild.add(character.id)
@@ -46,16 +92,30 @@ export default class Account {
   }
 
   // Rebuilds an Account from untrusted saved data, dropping anything invalid.
-  static fromJSON(data) {
+  static fromJSON(data, now = Date.now()) {
     const characters = data.characters
       .filter((c) => typeof c.id === 'string' && ID_PATTERN.test(c.id))
       .map((c) => ({ ...c, characterSpec: c.characterSpec ?? defaultSpec(c.characterClass, c.characterRole) }))
       .filter((c) => Object.keys(Character.validate(c)).length === 0)
-      .map((c) => new Character(c))
+      .map((c) => {
+        const character = new Character({ ...c, characterXp: 0, zone: null })
+        const xp = Number(c.characterXp)
+        if (Number.isFinite(xp) && xp > 0 && xp < character.xpToNextLevel) character.characterXp = xp
+        if (!zoneLockReason(character, getZone(c.zone))) character.zone = c.zone
+        return character
+      })
     const ids = new Set(characters.map((c) => c.id))
     const guilds = data.guilds.map(
       (g) => new Guild(String(g.guildName), g.characterIds.filter((id) => ids.has(id))),
     )
-    return new Account(String(data.accountName), characters, guilds)
+    const gold = Number(data.gold)
+    const lastTick = Number(data.lastTick)
+    return new Account(
+      String(data.accountName),
+      characters,
+      guilds,
+      Number.isFinite(gold) && gold > 0 ? gold : 0,
+      Number.isFinite(lastTick) && lastTick > 0 ? Math.min(lastTick, now) : now,
+    )
   }
 }

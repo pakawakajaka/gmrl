@@ -85,6 +85,76 @@ a {
   color: var(--text);
 }
 
+.site-nav {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.site-nav a {
+  padding: 0.35rem 0.85rem;
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.site-nav a:hover {
+  color: var(--text);
+}
+
+.site-nav a[aria-current="page"] {
+  background: var(--surface-raised);
+  color: var(--accent);
+}
+
+.coin-gold { color: #ffd100; }
+.coin-silver { color: #c7c7cf; }
+.coin-copper { color: #c8763c; }
+
+/* Notices */
+
+.notices {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 10;
+  display: grid;
+  gap: 0.5rem;
+  width: min(360px, calc(100vw - 2rem));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.5);
+}
+
+.notice p {
+  flex: 1;
+}
+
+.notice-close {
+  padding: 0 0.25rem;
+  border: 0;
+  background: none;
+  color: var(--text-muted);
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.notice-close:hover {
+  color: var(--text);
+}
+
 main {
   max-width: 980px;
   margin: 0 auto;
@@ -106,7 +176,9 @@ main {
 
 .view-footer {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
+  gap: 0.5rem;
   margin-top: 2rem;
 }
 
@@ -267,7 +339,8 @@ main {
   overflow-wrap: anywhere;
 }
 
-.guild-tags {
+.guild-tags,
+.farm-status {
   font-size: 0.875rem;
   color: var(--text-muted);
 }
@@ -293,6 +366,8 @@ main {
 .badge-dps { --badge-color: var(--dps); }
 .badge-alliance { --badge-color: var(--alliance); }
 .badge-horde { --badge-color: var(--horde); }
+.badge-contested { --badge-color: var(--text-muted); }
+.badge-sanctuary { --badge-color: var(--healer); }
 
 .card-actions {
   display: flex;
@@ -319,12 +394,6 @@ main {
 
 .form-fields {
   display: grid;
-  gap: 1rem;
-}
-
-.field-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
   gap: 1rem;
 }
 
@@ -521,8 +590,191 @@ input[type="number"] {
   }
 }
 
+/* Farming */
+
+.farm-income {
+  color: var(--text-muted);
+}
+
+.farm-characters {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 0.75rem;
+  margin: 0 0 1.5rem;
+  padding: 0;
+  list-style: none;
+}
+
+.farmer {
+  --class-color: var(--text-muted);
+  position: relative;
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--class-color);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.farmer.selected {
+  border-color: var(--accent);
+  border-left-color: var(--class-color);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.farmer-select {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.farmer-info {
+  display: grid;
+  min-width: 0;
+}
+
+.farmer-info .character-name {
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.farmer-level,
+.farmer-zone {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.farmer-zone {
+  color: var(--accent);
+}
+
+.farmer-recall {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+}
+
+.farmer:has(.farmer-recall) .farmer-select {
+  padding-right: 4.5rem;
+}
+
+.xp-bar {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--bg);
+}
+
+.xp-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #7a3fbf, #b77dff);
+  transition: width 0.9s linear;
+}
+
+.farmer-stats {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.25rem 0.75rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.zone-intro {
+  margin-bottom: 1rem;
+  color: var(--text-muted);
+}
+
+.continent + .continent {
+  margin-top: 1.5rem;
+}
+
+.continent h3 {
+  margin-bottom: 0.5rem;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.2rem;
+}
+
+.table-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.zone-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.zone-table th,
+.zone-table td {
+  padding: 0.45rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.zone-table thead th {
+  background: var(--surface-raised);
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.zone-table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+
+.zone-table tbody tr:hover {
+  background: var(--surface);
+}
+
+.zone-table tbody th {
+  font-weight: 600;
+}
+
+.zone-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.zone-table .reduced {
+  color: var(--text-muted);
+}
+
+.zone-table tr.locked > *:not(.zone-action) {
+  opacity: 0.45;
+}
+
+.zone-table tr.current {
+  background: rgb(240 178 50 / 0.1);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.zone-farmers {
+  font-size: 0.85rem;
+}
+
+.zone-action {
+  text-align: right;
+}
+
+.lock-reason {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
 @media (max-width: 480px) {
-  .field-row,
   .faction-columns {
     grid-template-columns: 1fr;
   }

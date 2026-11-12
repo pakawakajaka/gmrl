@@ -1,12 +1,13 @@
 import Character from './character.js'
 import { badge, el } from './dom.js'
-import { CLASSES, FACTIONS, MAX_LEVEL, MIN_LEVEL, RACES, ROLES, classIcon } from './data.js'
+import { CLASSES, FACTIONS, MIN_LEVEL, RACES, ROLES, classIcon } from './data.js'
 
-const FIELD_ORDER = ['characterName', 'characterRace', 'characterClass', 'characterSpec', 'characterRole', 'characterLevel']
+const FIELD_ORDER = ['characterName', 'characterRace', 'characterClass', 'characterSpec', 'characterRole']
 
 // Renders the create/edit screen. Pass `character` to edit an existing one.
 export function renderCharacterForm({ account, character, onSave }) {
   const isEditing = Boolean(character)
+  const level = character?.characterLevel ?? MIN_LEVEL // new characters always start at level 1
   const memberOf = new Set(isEditing ? account.guildsOf(character.id).map((g) => g.guildName) : [])
 
   // Race, class, spec and role can be picked in any order; a pick clears whatever it conflicts with.
@@ -20,10 +21,6 @@ export function renderCharacterForm({ account, character, onSave }) {
   const nameInput = el('input', {
     id: 'characterName', type: 'text', maxlength: 12, autocomplete: 'off', spellcheck: 'false',
     'data-autofocus': true, value: character?.characterName,
-  })
-  const levelInput = el('input', {
-    id: 'characterLevel', type: 'number', inputmode: 'numeric', min: MIN_LEVEL, max: MAX_LEVEL, step: 1,
-    value: character?.characterLevel ?? MIN_LEVEL,
   })
   const guildBoxes = account.guilds.map((g) =>
     el('input', { type: 'checkbox', value: g.guildName, checked: memberOf.has(g.guildName) }))
@@ -110,7 +107,7 @@ export function renderCharacterForm({ account, character, onSave }) {
     previewIcon.hidden = !cls
     if (cls) previewIcon.src = classIcon(cls)
     previewName.textContent = Character.formatName(nameInput.value) || 'Unnamed hero'
-    previewDetails.textContent = ['Level', levelInput.value || MIN_LEVEL, race, spec, cls].filter(Boolean).join(' ')
+    previewDetails.textContent = ['Level', level, race, spec, cls].filter(Boolean).join(' ')
     previewBadges.replaceChildren(...[role, race && RACES[race].faction].filter(Boolean).map(badge))
   }
 
@@ -139,7 +136,7 @@ export function renderCharacterForm({ account, character, onSave }) {
   }
 
   function handleInput(event) {
-    if (event.target !== nameInput && event.target !== levelInput) return
+    if (event.target !== nameInput) return
     showError(event.target.id, null)
     updatePreview()
   }
@@ -149,7 +146,7 @@ export function renderCharacterForm({ account, character, onSave }) {
     const values = {
       ...picks,
       characterName: nameInput.value.trim(),
-      characterLevel: levelInput.value === '' ? NaN : Number(levelInput.value),
+      characterLevel: level,
     }
     const errors = Character.validate(values)
     if (!errors.characterName && account.isNameTaken(values.characterName, character?.id)) {
@@ -177,10 +174,7 @@ export function renderCharacterForm({ account, character, onSave }) {
       pickerField('characterRace', 'Race', racePicker),
       pickerField('characterClass', 'Class', classPicker),
       pickerField('characterSpec', 'Spec', specPicker),
-      el('div', { class: 'field-row' },
-        pickerField('characterRole', 'Role', rolePicker),
-        field('Level', levelInput, `${MIN_LEVEL} to ${MAX_LEVEL}`),
-      ),
+      pickerField('characterRole', 'Role', rolePicker),
       guildBoxes.length > 0 && el('fieldset', { class: 'field' },
         el('legend', { class: 'field-label' }, 'Guilds'),
         guildBoxes.map((box) => el('label', { class: 'checkbox' }, box, box.value)),
@@ -202,6 +196,7 @@ export function renderCharacterForm({ account, character, onSave }) {
   return el('section', { class: 'character-editor', 'aria-labelledby': 'view-title' },
     el('div', { class: 'view-header' },
       el('h2', { id: 'view-title' }, isEditing ? `Edit ${character.characterName}` : 'Create Character'),
+      !isEditing && el('p', { class: 'field-hint' }, `New characters start at level ${MIN_LEVEL}. Send them farming to level up.`),
     ),
     form,
   )
