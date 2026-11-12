@@ -1,9 +1,54 @@
 // Classic gear rules: who can use what, where it goes, how good it is for a spec, and loot/quest rolls.
-import { BASE_HEALTH_MANA, BASE_STATS, ITEMS, LOOT, LOOT_REFS, QUESTS, ZONE_MOBS, ZONE_QUESTS } from './gear-data.js'
+import { BASE_HEALTH_MANA, BASE_STATS, ITEMS, LOOT, LOOT_REFS, QUESTS, SUFFIXES, SUFFIX_POOLS, ZONE_MOBS, ZONE_QUESTS } from './gear-data.js'
 
 export { BASE_HEALTH_MANA, BASE_STATS, QUESTS, ZONE_QUESTS }
 
-export const getItem = (id) => (Object.hasOwn(ITEMS, id) ? ITEMS[id] : undefined)
+// Owned items are keyed by item id (number), or "itemId:suffixId" (string) for random "of the ..." items.
+const suffixedItems = new Map()
+export function getItem(key) {
+  if (typeof key === 'number') return Object.hasOwn(ITEMS, key) ? ITEMS[key] : undefined
+  if (suffixedItems.has(key)) return suffixedItems.get(key)
+  const [id, suffixId] = String(key).split(':').map(Number)
+  const base = Object.hasOwn(ITEMS, id) ? ITEMS[id] : undefined
+  const pool = base?.suffixes && SUFFIX_POOLS[base.suffixes]
+  if (!pool?.some(([s]) => s === suffixId)) return undefined
+  const item = withSuffix(base, SUFFIXES[suffixId])
+  suffixedItems.set(key, item)
+  return item
+}
+
+function withSuffix(base, suffix) {
+  const item = { ...base, name: `${base.name} ${suffix.name}` }
+  delete item.suffixes
+  for (const field of ['stats', 'resist', 'bonus']) {
+    if (!suffix[field]) continue
+    item[field] = { ...base[field] }
+    for (const [key, value] of Object.entries(suffix[field])) item[field][key] = (item[field][key] ?? 0) + value
+  }
+  if (suffix.effects) item.effects = [...(base.effects ?? []), ...suffix.effects]
+  return Object.freeze(item)
+}
+
+// Validates an item key from saved data. Returns the normalized key or undefined.
+export function itemKey(raw) {
+  if (typeof raw === 'number' || /^\d+$/.test(raw)) return getItem(Number(raw)) ? Number(raw) : undefined
+  return typeof raw === 'string' && /^\d+:\d+$/.test(raw) && getItem(raw) ? raw : undefined
+}
+
+const baseId = (key) => Number(String(key).split(':')[0])
+
+// Gives a random-suffix item its suffix (weighted by the real Classic chances); other items are unchanged.
+export function rollSuffix(id, random = Math.random) {
+  const pool = ITEMS[id]?.suffixes && SUFFIX_POOLS[ITEMS[id].suffixes]
+  if (!pool) return id
+  let roll = random() * pool.reduce((sum, [, chance]) => sum + chance, 0)
+  for (const [suffixId, chance] of pool) {
+    if (roll < chance) return `${id}:${suffixId}`
+    roll -= chance
+  }
+  return `${id}:${pool.at(-1)[0]}`
+}
+
 export const getQuest = (id) => (Object.hasOwn(QUESTS, id) ? QUESTS[id] : undefined)
 
 export const QUALITIES = ['poor', 'common', 'uncommon', 'rare', 'epic']
@@ -133,7 +178,6 @@ export function itemScore(character, item, slot) {
     if (key.endsWith('Damage') && key !== 'spellDamage' && profile === 'caster') {
       weight = CASTER_SCHOOLS[character.characterClass]?.includes(key.replace('Damage', '')) ? w.spellDamage * 0.8 : 0
     }
-    if (key === 'spellDamage' && profile === 'healer') weight = w.healing
     score += weight * value
   }
   score += (w.armor ?? 0) * (item.armor ?? 0)
@@ -158,7 +202,7 @@ export function bestLoadout(character, owned) {
     let bestScore = -Infinity
     for (const i of unused) {
       const { item } = pool[i]
-      if (!fitsSlot(item, slot) || (filter && !filter(item))) continue
+      if (!fitsSlot(item, slot) || (filter && !filter(pool[i]))) continue
       const score = itemScore(character, item, slot)
       if (score > bestScore) {
         best = i
@@ -174,7 +218,7 @@ export function bestLoadout(character, owned) {
   for (const slot of ['head', 'neck', 'shoulder', 'back', 'chest', 'shirt', 'tabard', 'wrist', 'hands', 'waist', 'legs', 'feet', 'ranged']) take(slot)
   for (const pair of [['finger1', 'finger2'], ['trinket1', 'trinket2']]) {
     const first = take(pair[0])
-    take(pair[1], (item) => !(first?.item.unique && first.item === item))
+    take(pair[1], (entry) => !(first?.item.unique && baseId(first.id) === baseId(entry.id)))
   }
 
   // Weapons: compare the best two-hander against the best one-hand + off-hand pair.
@@ -228,14 +272,14 @@ function rollLootList(entries, out, random) {
       const [id, chance, rolls = 1] = entry
       for (let r = 0; r < rolls; r++) {
         if (random() * 100 >= chance) continue
-        if (id > 0) out.push(id)
+        if (id > 0) out.push(rollSuffix(id, random))
         else rollLootList(LOOT_REFS[-id], out, random)
       }
     } else {
       let roll = random() * 100
       for (const [id, chance] of entry.group) {
         if (roll < chance) {
-          if (id > 0) out.push(id)
+          if (id > 0) out.push(rollSuffix(id, random))
           else rollLootList(LOOT_REFS[-id], out, random)
           break
         }

@@ -5,6 +5,7 @@
 //   spell.sql              CMaNGOS mangos-classic sql/base/dbc/original_data/Spell.sql
 //   pfq/units.lua, pfq/quests.lua, pfq/zones.lua, pfq/enUS/zones.lua   from pfQuest (github.com/shagu/pfQuest)
 //   v082/package/data/json/data.json   wow-classic-items@0.8.2 (npm), used for icons and tooltip text
+//   wowsims-classic.json   wowsims/classic assets/database/db.json (MIT), used for random "of the ..." suffix stats
 //
 // Output: only equippable items that drop from open-world mobs in this game's zones or are rewarded by
 // quests in those zones, their drop tables, those quests, and the player base stats per race/class/level.
@@ -41,6 +42,8 @@ const pfQuests = luaTable(read('pfq/quests.lua'))
 const pfZones = luaTable(read('pfq/zones.lua'))
 const pfZoneNames = luaTable(read('pfq/enUS/zones.lua'))
 const classicItems = new Map(JSON.parse(read('v082/package/data/json/data.json')).map((i) => [i.itemId, i]))
+const randomProperties = new Map(JSON.parse(read('wowsims-classic.json')).randomSuffixes.map((s) => [s.id, s]))
+const itemEnchantments = groupBy(sqlRows(sql, 'item_enchantment_template'), 'entry')
 
 // ---- Zones: area id -> our zone name ----
 const zoneById = new Map()
@@ -67,10 +70,68 @@ function isCandidate(row) {
   return (
     row &&
     EQUIPPABLE.has(row.InventoryType) &&
-    !row.RandomProperty && // random "of the ..." suffixes need client tables that aren't available
+    (!row.RandomProperty || suffixesOf(row).length > 0) &&
     classicItems.has(row.entry) &&
     !(row.class === 2 && row.subclass === 20) // fishing poles
   )
+}
+
+// ---- Random "of the ..." suffixes (ItemRandomProperties) ----
+// wowsims stat index -> [field, key]. Classic suffixes only use these.
+const SUFFIX_STATS = {
+  0: ['stats', 'str'], 1: ['stats', 'agi'], 2: ['stats', 'sta'], 3: ['stats', 'int'], 4: ['stats', 'spi'],
+  5: ['bonus', 'spellDamage'], 6: ['bonus', 'arcaneDamage'], 7: ['bonus', 'fireDamage'], 8: ['bonus', 'frostDamage'],
+  9: ['bonus', 'holyDamage'], 10: ['bonus', 'natureDamage'], 11: ['bonus', 'shadowDamage'], 12: ['bonus', 'mp5'],
+  17: ['bonus', 'attackPower'], 27: ['bonus', 'rangedAttackPower'], 28: ['bonus', 'defense'], 29: ['bonus', 'block'],
+  31: ['bonus', 'dodge'], 35: ['resist', 'arcane'], 36: ['resist', 'fire'], 37: ['resist', 'frost'],
+  38: ['resist', 'nature'], 39: ['resist', 'shadow'], 41: ['bonus', 'healing'],
+}
+const suffixes = {}
+
+function buildSuffix(source) {
+  const suffix = { name: source.name }
+  source.stats.forEach((value, index) => {
+    if (!value) return
+    if (!SUFFIX_STATS[index]) throw new Error(`Unmapped suffix stat ${index} in ${source.id} ${source.name}`)
+    const [field, key] = SUFFIX_STATS[index]
+    suffix[field] ??= {}
+    suffix[field][key] = value
+  })
+  if (!suffix.stats && !suffix.bonus && !suffix.resist) return null // e.g. "of Regeneration" (health per 5) has no data
+  const b = suffix.bonus ?? {}
+  const effects = []
+  if (b.spellDamage && b.spellDamage === b.healing) effects.push(`Equip: Increases damage and healing done by magical spells and effects by up to ${b.spellDamage}.`)
+  else {
+    if (b.spellDamage) effects.push(`Equip: Increases damage done by magical spells and effects by up to ${b.spellDamage}.`)
+    if (b.healing) effects.push(`Equip: Increases healing done by spells and effects by up to ${b.healing}.`)
+  }
+  for (const school of ['holy', 'fire', 'nature', 'frost', 'shadow', 'arcane']) {
+    const value = b[`${school}Damage`]
+    if (value) effects.push(`Equip: Increases damage done by ${school[0].toUpperCase()}${school.slice(1)} spells and effects by up to ${value}.`)
+  }
+  if (b.attackPower) effects.push(`Equip: +${b.attackPower} Attack Power.`)
+  if (b.rangedAttackPower && b.rangedAttackPower !== b.attackPower) effects.push(`Equip: +${b.rangedAttackPower} ranged Attack Power.`)
+  if (b.defense) effects.push(`Equip: Increased Defense +${b.defense}.`)
+  if (b.block) effects.push(`Equip: Increases your chance to block attacks with a shield by ${b.block}%.`)
+  if (b.dodge) effects.push(`Equip: Increases your chance to dodge an attack by ${b.dodge}%.`)
+  if (b.mp5) effects.push(`Equip: Restores ${b.mp5} mana per 5 sec.`)
+  if (effects.length) suffix.effects = effects
+  return suffix
+}
+
+// [[suffixId, chance%], ...] an item can roll, from item_enchantment_template; only suffixes with known stats.
+const suffixMemo = new Map()
+function suffixesOf(row) {
+  if (suffixMemo.has(row.RandomProperty)) return suffixMemo.get(row.RandomProperty)
+  const list = []
+  for (const { ench, chance } of itemEnchantments.get(row.RandomProperty) ?? []) {
+    const source = randomProperties.get(ench)
+    if (!source || chance <= 0) continue
+    if (!(ench in suffixes)) suffixes[ench] = buildSuffix(source)
+    if (suffixes[ench]) list.push([ench, round(chance)])
+  }
+  suffixMemo.set(row.RandomProperty, list)
+  return list
 }
 
 // Equip-effect bonuses from an item's "Equip:" spells, keyed like the stats panel uses them.
@@ -160,6 +221,7 @@ function buildItem(row) {
   const lines = source.tooltip.map((t) => t.label).filter((label) => SPECIAL_LINE.test(label))
   if (lines.length) item.effects = lines
   if (row.description) item.description = row.description
+  if (row.RandomProperty) item.suffixes = row.RandomProperty // key into SUFFIX_POOLS
   return item
 }
 
@@ -328,11 +390,21 @@ const mobs = {}
 for (const [zone, map] of Object.entries(zoneMobs)) mobs[zone] = [...map.values()].sort((a, b) => a[0] - b[0] || a[3] - b[3])
 const loot = Object.fromEntries(Object.entries(lootIds).filter(([, v]) => v))
 for (const list of Object.values(zoneQuests)) list.sort((a, b) => quests[a].level - quests[b].level || a - b)
+const suffixPools = {}
+for (const id of keptItems) {
+  const row = itemRows.get(id)
+  if (row.RandomProperty) suffixPools[row.RandomProperty] = suffixesOf(row)
+}
+const usedSuffixes = new Set(Object.values(suffixPools).flatMap((pool) => pool.map(([id]) => id)))
+const suffixData = Object.fromEntries(Object.entries(suffixes).filter(([id]) => usedSuffixes.has(Number(id))))
 
 const json = (value) => JSON.stringify(value)
 const out = `// Generated by tools/build-gear-data.mjs. Do not edit.
-// Source: CMaNGOS classic-db and mangos-classic (patch 1.12, GPL-2.0), pfQuest (MIT), wow-classic-items (MIT).
+// Source: CMaNGOS classic-db and mangos-classic (patch 1.12, GPL-2.0), pfQuest (MIT), wow-classic-items (MIT),
+// wowsims/classic random suffix stats (MIT).
 export const ITEMS = ${json(items)}
+export const SUFFIXES = ${json(suffixData)}
+export const SUFFIX_POOLS = ${json(suffixPools)}
 export const LOOT = ${json(loot)}
 export const LOOT_REFS = ${json(refs)}
 export const ZONE_MOBS = ${json(mobs)}
@@ -343,7 +415,8 @@ export const BASE_HEALTH_MANA = ${json(baseHealthMana)}
 `
 fs.writeFileSync(OUT, out)
 console.log(
-  `items ${Object.keys(items).length}, loot tables ${Object.keys(loot).length}, refs ${Object.keys(refs).length},`,
+  `items ${Object.keys(items).length} (${Object.values(items).filter((i) => i.suffixes).length} random-suffix), suffixes ${Object.keys(suffixData).length},`,
+  `loot tables ${Object.keys(loot).length}, refs ${Object.keys(refs).length},`,
   `quests ${Object.keys(quests).length}, size ${(out.length / 1024).toFixed(0)} KB`,
 )
 for (const zone of ZONES) console.log(zone.name.padEnd(22), 'mobs', String(mobs[zone.name].length).padStart(4), 'quests', zoneQuests[zone.name].length)

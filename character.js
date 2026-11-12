@@ -1,6 +1,6 @@
 import { CLASSES, MAX_LEVEL, MIN_LEVEL, NAME_PATTERN, RACES, ROLES, classIcon, xpToNextLevel } from './data.js'
 import { getZone, xpPerHour } from './zones.js'
-import { KILLS_PER_HOUR, QUEST_HOURS, SLOTS, bestLoadout, getItem, getQuest, levelToUse, nextQuest, rollKills } from './gear.js'
+import { KILLS_PER_HOUR, QUEST_HOURS, SLOTS, bestLoadout, getItem, getQuest, itemKey, levelToUse, nextQuest, rollKills } from './gear.js'
 
 const lookup = (table, key) => (Object.hasOwn(table, key) ? table[key] : undefined)
 const BAG_SIZE = 16
@@ -122,16 +122,16 @@ export default class Character {
 
   // Restores gear fields from untrusted saved data, dropping anything that doesn't exist.
   restoreGear(data) {
-    const ids = (list) => (Array.isArray(list) ? list.map(Number).filter((id) => getItem(id)) : [])
+    const ids = (list) => (Array.isArray(list) ? list.map(itemKey).filter((key) => key !== undefined) : [])
     const fraction = (value, max) => (Number.isFinite(Number(value)) ? Math.min(Math.max(Number(value), 0), max) : 0)
     const equipped = data.equipment && typeof data.equipment === 'object' ? Object.values(data.equipment) : []
     this.questsDone = [...new Set(Array.isArray(data.questsDone) ? data.questsDone.map(Number).filter((id) => getQuest(id)) : [])]
     this.questProgress = fraction(data.questProgress, QUEST_HOURS)
     this.killProgress = fraction(data.killProgress, 1)
     this.lootLog = (Array.isArray(data.lootLog) ? data.lootLog : [])
-      .filter((e) => e && getItem(Number(e.item)) && typeof e.source === 'string' && Number.isFinite(Number(e.at)))
+      .filter((e) => e && itemKey(e.item) !== undefined && typeof e.source === 'string' && Number.isFinite(Number(e.at)))
       .slice(0, LOG_SIZE)
-      .map((e) => ({ item: Number(e.item), source: e.source.slice(0, 100), at: Number(e.at), equipped: e.equipped === true }))
+      .map((e) => ({ item: itemKey(e.item), source: e.source.slice(0, 100), at: Number(e.at), equipped: e.equipped === true }))
     this.equipment = {}
     this.bag = []
     this.equipBest([...ids(equipped), ...ids(data.bag)])
