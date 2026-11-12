@@ -279,43 +279,126 @@ function compileRef(refId) {
 
 const round = (n) => Math.round(n * 10000) / 10000
 
-// ---- Mobs per zone ----
-// Hostile, non-elite (normal, rare, rare elite) creatures with a loot table, weighted by how often they can
-// be killed: each normal spawn point counts 1 (per 5-minute respawn); a rare counts once at its respawn rate.
+// Expected vendor value in copper of everything a loot list drops (quest items aside). Characters sell
+// whatever they don't wear, so this is the loot's share of gold per kill.
+const valueMemo = new Map()
+function lootValue(rows) {
+  let value = 0
+  const groups = new Map()
+  for (const row of rows) {
+    if (row.ChanceOrQuestChance < 0) continue
+    const each = row.mincountOrRef < 0
+      ? refValue(-row.mincountOrRef) * (row.maxcount || 1)
+      : (itemRows.get(row.item)?.SellPrice ?? 0) * (row.mincountOrRef + row.maxcount) / 2
+    if (row.groupid) {
+      if (!groups.has(row.groupid)) groups.set(row.groupid, [])
+      groups.get(row.groupid).push({ chance: row.ChanceOrQuestChance, each })
+    } else value += (row.ChanceOrQuestChance / 100) * each
+  }
+  for (const members of groups.values()) {
+    const explicit = members.reduce((sum, m) => sum + m.chance, 0)
+    const equal = members.filter((m) => m.chance === 0).length
+    const share = equal ? Math.max(0, 100 - explicit) / equal : 0
+    for (const m of members) value += ((m.chance || share) / 100) * m.each
+  }
+  return value
+}
+function refValue(refId) {
+  if (valueMemo.has(refId)) return valueMemo.get(refId)
+  valueMemo.set(refId, 0) // guards against cycles
+  const value = lootValue(referenceLoot.get(refId) ?? [])
+  valueMemo.set(refId, value)
+  return value
+}
+
+// ---- Mobs ----
+// Hostile, soloable (normal, rare, rare elite) creatures that can be attacked, weighted per zone by how often
+// they can be killed: each normal spawn point counts 1 (per 5-minute respawn); a rare counts once at its
+// respawn rate. Critters are left out.
 const NORMAL_RESPAWN = 300
+const UNATTACKABLE = 0x2 | 0x100 | 0x2000000 // non-attackable, immune to players, not selectable
+const CRITTER = 8
 const lootIds = {}
+const mobs = {}
 const zoneMobs = Object.fromEntries(ZONES.map((z) => [z.name, new Map()]))
+const mobZones = new Map() // entry -> Set of zones
+
+function buildMob(c) {
+  const attack = (c.MeleeBaseAttackTime || 2000) / 1000
+  const hit = ((c.MinMeleeDmg + c.MaxMeleeDmg) / 2 + (c.MeleeAttackPower / 14) * attack) * (c.DamageMultiplier || 1)
+  const mob = {
+    name: c.Name,
+    level: [c.MinLevel, c.MaxLevel],
+    hp: [c.MinLevelHealth, c.MaxLevelHealth],
+    dps: round(hit / attack),
+    armor: c.Armor,
+  }
+  const coin = (c.MinLootGold + c.MaxLootGold) / 2
+  const value = c.LootId ? lootValue(creatureLoot.get(c.LootId) ?? []) : 0
+  if (coin) mob.coin = Math.round(coin)
+  if (value >= 1) mob.value = Math.round(value)
+  if (c.Rank === 2) mob.elite = true
+  if (c.ExperienceMultiplier !== 1) mob.xp = c.ExperienceMultiplier
+  if (c.LootId) {
+    if (!(c.LootId in lootIds)) {
+      const loot = compileLoot(creatureLoot.get(c.LootId) ?? [])
+      lootIds[c.LootId] = loot.length ? loot : null
+    }
+    if (lootIds[c.LootId]) mob.loot = c.LootId
+  }
+  return mob
+}
+
 for (const [entry, unit] of Object.entries(pfUnits)) {
   if (unit.fac || !unit.coords) continue // friendly to a faction
   const creature = creatures.get(Number(entry))
-  if (!creature || !creature.LootId || ![0, 2, 4].includes(creature.Rank)) continue
+  if (!creature || ![0, 2, 4].includes(creature.Rank) || creature.CreatureType === CRITTER) continue
+  if (creature.UnitFlags & UNATTACKABLE || creature.NpcFlags || creature.MinLevelHealth <= 0) continue
   if (creature.MinLevel < 1 || creature.MaxLevel > 63) continue
   const perZone = new Map()
   for (const coord of Object.values(unit.coords)) {
     const zone = zoneById.get(coord[2])
     if (!zone) continue
+    // pfQuest lists border spawns on every zone map they show up on; keep mobs near the zone's level range.
+    const { minLevel, maxLevel } = ZONES.find((z) => z.name === zone)
+    if (creature.MinLevel > maxLevel + 5 || creature.MaxLevel < minLevel - 5) continue
     const z = perZone.get(zone) ?? { points: 0, respawn: 0 }
     z.points += 1
     z.respawn += coord[3] || NORMAL_RESPAWN
     perZone.set(zone, z)
   }
   if (!perZone.size) continue
-  if (!(creature.LootId in lootIds)) {
-    const loot = compileLoot(creatureLoot.get(creature.LootId) ?? [])
-    lootIds[creature.LootId] = loot.length ? loot : null
-  }
-  if (!lootIds[creature.LootId]) continue
+  mobs[creature.Entry] = buildMob(creature)
   const rare = creature.Rank !== 0
   for (const [zone, { points, respawn }] of perZone) {
     const avgRespawn = Math.max(NORMAL_RESPAWN, respawn / points)
     const weight = rare ? NORMAL_RESPAWN / avgRespawn : points * (NORMAL_RESPAWN / avgRespawn)
-    const key = `${creature.MinLevel}-${creature.MaxLevel}-${creature.LootId}`
-    const mobs = zoneMobs[zone]
-    const existing = mobs.get(key)
-    if (existing) existing[2] = round(existing[2] + weight)
-    else mobs.set(key, [creature.MinLevel, creature.MaxLevel, round(weight), creature.LootId])
+    zoneMobs[zone].set(creature.Entry, round(weight))
+    if (!mobZones.has(creature.Entry)) mobZones.set(creature.Entry, new Set())
+    mobZones.get(creature.Entry).add(zone)
   }
 }
+
+// Quest objective sources. Kill credit: a kill of `entry` counts for its own id and its KillCredit ids.
+const creditSources = new Map() // credited id -> [entry, ...]
+for (const entry of Object.keys(mobs).map(Number)) {
+  const c = creatures.get(entry)
+  for (const id of [entry, c.KillCredit1, c.KillCredit2]) {
+    if (!id) continue
+    if (!creditSources.has(id)) creditSources.set(id, [])
+    creditSources.get(id).push(entry)
+  }
+}
+// Item -> loot ids that drop it (quest drops and normal drops).
+const itemLootIds = new Map()
+for (const [lootId, rows] of creatureLoot) {
+  for (const row of rows) {
+    if (row.mincountOrRef < 0 || !row.item) continue
+    if (!itemLootIds.has(row.item)) itemLootIds.set(row.item, [])
+    itemLootIds.get(row.item).push([lootId, Math.abs(row.ChanceOrQuestChance)])
+  }
+}
+const creaturesByLoot = groupBy([...creatures.values()].filter((c) => c.LootId), 'LootId')
 
 // ---- Quests ----
 const RACE_ALLIANCE = 1 | 4 | 8 | 64
@@ -335,6 +418,46 @@ function questFaction(row, pf) {
   return null
 }
 
+// Kill objectives: [creditId, count, sourceEntries?]. Sources are left out when it's just the creature itself.
+// Returns null if a target can't be soloed in the zone (elite, or not there).
+function killObjectives(row, zone) {
+  const out = []
+  for (let k = 1; k <= 4; k++) {
+    const id = row[`ReqCreatureOrGOId${k}`]
+    const count = row[`ReqCreatureOrGOCount${k}`]
+    if (id <= 0 || count <= 0) continue // game objects and spell casts are part of the errand time
+    const sources = (creditSources.get(id) ?? []).filter((entry) => zoneMobs[zone].has(entry))
+    if (!sources.length) return null
+    out.push(sources.length === 1 && sources[0] === id ? [id, count] : [id, count, sources])
+  }
+  return out
+}
+
+// Item objectives that drop from mobs: [itemId, count, [[mobEntry, chance%], ...]]. Items that don't drop from
+// any creature (picked up from objects, given by NPCs) are part of the errand time. Returns null if the item
+// only drops from creatures that can't be soloed in the zone.
+const questItems = {}
+function itemObjectives(row, zone) {
+  const out = []
+  for (let k = 1; k <= 4; k++) {
+    const id = row[`ReqItemId${k}`]
+    const count = row[`ReqItemCount${k}`]
+    if (!id || count <= 0) continue
+    const drops = itemLootIds.get(id) ?? []
+    if (!drops.length) continue
+    const sources = []
+    for (const [lootId, chance] of drops) {
+      for (const c of creaturesByLoot.get(lootId) ?? []) {
+        if (zoneMobs[zone].has(c.Entry) && chance > 0) sources.push([c.Entry, round(chance)])
+      }
+    }
+    if (!sources.length) return null
+    out.push([id, count, sources])
+    questItems[id] = itemRows.get(id)?.name ?? `Item ${id}`
+  }
+  return out
+}
+
 const quests = {}
 const zoneQuests = Object.fromEntries(ZONES.map((z) => [z.name, []]))
 for (const row of questRows) {
@@ -346,7 +469,12 @@ for (const row of questRows) {
   const keep = (ids) => ids.filter((id) => id && isCandidate(itemRows.get(id)))
   const choice = keep([1, 2, 3, 4, 5, 6].map((k) => row[`RewChoiceItemId${k}`]))
   const reward = keep([1, 2, 3, 4].map((k) => row[`RewItemId${k}`]))
-  if (!choice.length && !reward.length) continue
+  const xp = row.QuestLevel > 0 && row.QuestLevel <= 60 ? Math.round(row.RewMoneyMaxLevel / 0.6) : 0
+  const money = Math.max(0, row.RewOrReqMoney)
+  if (!choice.length && !reward.length && !xp && !money) continue
+  const kills = killObjectives(row, zone)
+  const items = itemObjectives(row, zone)
+  if (!kills || !items) continue // needs a group or mobs from elsewhere
   for (const id of [...choice, ...reward]) keptItems.add(id)
   const quest = { title: row.Title, zone, level: row.QuestLevel, minLevel: Math.max(1, row.MinLevel) }
   const faction = questFaction(row, pf)
@@ -355,12 +483,16 @@ for (const row of questRows) {
   if (row.RequiredClasses) quest.classes = row.RequiredClasses
   if (row.PrevQuestId) quest.prev = Math.abs(row.PrevQuestId)
   if (row.ExclusiveGroup > 0) quest.exclusive = row.ExclusiveGroup
+  if (xp) quest.xp = xp
+  if (money) quest.money = money
+  if (kills.length) quest.kills = kills
+  if (items.length) quest.items = items
   if (choice.length) quest.choice = choice
   if (reward.length) quest.reward = reward
   quests[row.entry] = quest
   zoneQuests[zone].push(row.entry)
 }
-// Prerequisites outside this data set (quests without gear rewards) are treated as done.
+// Prerequisites outside this data set are treated as done.
 for (const quest of Object.values(quests)) if (quest.prev && !quests[quest.prev]) delete quest.prev
 
 // ---- Base stats ----
@@ -386,8 +518,10 @@ for (const r of classLevelStats) {
 // ---- Output ----
 const items = {}
 for (const id of [...keptItems].sort((a, b) => a - b)) items[id] = buildItem(itemRows.get(id))
-const mobs = {}
-for (const [zone, map] of Object.entries(zoneMobs)) mobs[zone] = [...map.values()].sort((a, b) => a[0] - b[0] || a[3] - b[3])
+const zoneMobList = {}
+for (const [zone, map] of Object.entries(zoneMobs)) {
+  zoneMobList[zone] = [...map].sort(([a], [b]) => mobs[a].level[0] - mobs[b].level[0] || a - b)
+}
 const loot = Object.fromEntries(Object.entries(lootIds).filter(([, v]) => v))
 for (const list of Object.values(zoneQuests)) list.sort((a, b) => quests[a].level - quests[b].level || a - b)
 const suffixPools = {}
@@ -407,9 +541,11 @@ export const SUFFIXES = ${json(suffixData)}
 export const SUFFIX_POOLS = ${json(suffixPools)}
 export const LOOT = ${json(loot)}
 export const LOOT_REFS = ${json(refs)}
-export const ZONE_MOBS = ${json(mobs)}
+export const MOBS = ${json(mobs)}
+export const ZONE_MOBS = ${json(zoneMobList)}
 export const QUESTS = ${json(quests)}
 export const ZONE_QUESTS = ${json(zoneQuests)}
+export const QUEST_ITEMS = ${json(questItems)}
 export const BASE_STATS = ${json(baseStats)}
 export const BASE_HEALTH_MANA = ${json(baseHealthMana)}
 `
@@ -417,6 +553,10 @@ fs.writeFileSync(OUT, out)
 console.log(
   `items ${Object.keys(items).length} (${Object.values(items).filter((i) => i.suffixes).length} random-suffix), suffixes ${Object.keys(suffixData).length},`,
   `loot tables ${Object.keys(loot).length}, refs ${Object.keys(refs).length},`,
-  `quests ${Object.keys(quests).length}, size ${(out.length / 1024).toFixed(0)} KB`,
+  `mobs ${Object.keys(mobs).length}, quests ${Object.keys(quests).length}, size ${(out.length / 1024).toFixed(0)} KB`,
 )
-for (const zone of ZONES) console.log(zone.name.padEnd(22), 'mobs', String(mobs[zone.name].length).padStart(4), 'quests', zoneQuests[zone.name].length)
+for (const zone of ZONES) {
+  const ids = zoneQuests[zone.name]
+  const errands = ids.filter((id) => !quests[id].kills && !quests[id].items).length
+  console.log(zone.name.padEnd(22), 'mobs', String(zoneMobList[zone.name].length).padStart(4), 'quests', String(ids.length).padStart(3), 'errands', errands)
+}

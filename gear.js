@@ -1,7 +1,7 @@
 // Classic gear rules: who can use what, where it goes, how good it is for a spec, and loot/quest rolls.
-import { BASE_HEALTH_MANA, BASE_STATS, ITEMS, LOOT, LOOT_REFS, QUESTS, SUFFIXES, SUFFIX_POOLS, ZONE_MOBS, ZONE_QUESTS } from './gear-data.js'
+import { BASE_HEALTH_MANA, BASE_STATS, ITEMS, LOOT, LOOT_REFS, MOBS, QUESTS, QUEST_ITEMS, SUFFIXES, SUFFIX_POOLS, ZONE_QUESTS } from './gear-data.js'
 
-export { BASE_HEALTH_MANA, BASE_STATS, QUESTS, ZONE_QUESTS }
+export { BASE_HEALTH_MANA, BASE_STATS, QUESTS, QUEST_ITEMS, ZONE_QUESTS }
 
 // Owned items are keyed by item id (number), or "itemId:suffixId" (string) for random "of the ..." items.
 const suffixedItems = new Map()
@@ -245,27 +245,6 @@ export function bestLoadout(character, owned) {
 }
 
 // ---- Loot ----
-export const KILLS_PER_HOUR = 60
-
-const poolCache = new Map()
-// Mobs a character of `level` fights in the zone: green to orange con, or the nearest band if none.
-function mobPool(zoneName, level) {
-  const key = `${zoneName}|${level}`
-  if (poolCache.has(key)) return poolCache.get(key)
-  const mobs = Object.hasOwn(ZONE_MOBS, zoneName) ? ZONE_MOBS[zoneName] : []
-  let pool = mobs.filter(([min, max]) => min <= level + 2 && max >= level - 5)
-  if (!pool.length && mobs.length) {
-    const top = Math.max(...mobs.map(([, max]) => max))
-    const bottom = Math.min(...mobs.map(([min]) => min))
-    pool = level > top ? mobs.filter(([, max]) => max >= top - 3) : mobs.filter(([min]) => min <= bottom + 3)
-  }
-  let total = 0
-  const weighted = pool.map(([, , weight, lootId]) => ({ lootId, upTo: (total += weight) }))
-  const result = { total, weighted }
-  poolCache.set(key, result)
-  return result
-}
-
 function rollLootList(entries, out, random) {
   for (const entry of entries) {
     if (Array.isArray(entry)) {
@@ -289,23 +268,17 @@ function rollLootList(entries, out, random) {
   }
 }
 
-// Item ids dropped by `kills` kills in the zone at the character's level.
-export function rollKills(zoneName, level, kills, random = Math.random) {
-  const { total, weighted } = mobPool(zoneName, level)
+// Gear item ids dropped by one kill of mob `entry`.
+export function rollMobLoot(entry, random = Math.random) {
   const drops = []
-  if (!total) return drops
-  for (let k = 0; k < kills; k++) {
-    const pick = random() * total
-    const mob = weighted.find((m) => pick < m.upTo) ?? weighted.at(-1)
-    rollLootList(LOOT[mob.lootId], drops, random)
-  }
+  const lootId = MOBS[entry]?.loot
+  if (lootId && Object.hasOwn(LOOT, lootId)) rollLootList(LOOT[lootId], drops, random)
   return drops
 }
 
 // ---- Quests ----
-export const QUEST_HOURS = 0.25
-
-function questRewardsFor(character, quest) {
+// Gear a quest gives this character: every usable fixed reward plus its pick of the choices.
+export function questRewardsFor(character, quest) {
   const usable = (id) => levelToUse(character, getItem(id)) < Infinity
   const rewards = (quest.reward ?? []).filter(usable)
   const choices = (quest.choice ?? []).filter(usable)
@@ -317,22 +290,4 @@ function questRewardsFor(character, quest) {
     rewards.push(choices.reduce((best, id) => (value(id) > value(best) ? id : best)))
   }
   return rewards
-}
-
-// The next quest in the zone the character can do that rewards gear it can use, or undefined.
-export function nextQuest(character, zoneName, done) {
-  const ids = Object.hasOwn(ZONE_QUESTS, zoneName) ? ZONE_QUESTS[zoneName] : []
-  const doneGroups = new Set([...done].map((id) => getQuest(id)?.exclusive).filter(Boolean))
-  for (const id of ids) {
-    const quest = QUESTS[id]
-    if (done.has(id) || quest.minLevel > character.characterLevel) continue
-    if (quest.faction && quest.faction !== character.faction) continue
-    if (quest.races && !(quest.races & RACE_BITS[character.characterRace])) continue
-    if (quest.classes && !(quest.classes & CLASS_BITS[character.characterClass])) continue
-    if (quest.prev && !done.has(quest.prev)) continue
-    if (quest.exclusive && doneGroups.has(quest.exclusive)) continue
-    const rewards = questRewardsFor(character, quest)
-    if (rewards.length) return { id, quest, rewards }
-  }
-  return undefined
 }

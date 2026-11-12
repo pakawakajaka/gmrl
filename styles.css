@@ -1172,6 +1172,32 @@ main:has(.character-sheet) {
   color: var(--text-muted);
 }
 
+.quest-log,
+.quest-objectives {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.quest-log {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.quest-title {
+  color: var(--accent);
+}
+
+.quest-objectives {
+  padding-left: 1rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.quest-objectives .done {
+  text-decoration: line-through;
+}
+
 .bag {
   grid-template-columns: repeat(auto-fill, 48px);
 }

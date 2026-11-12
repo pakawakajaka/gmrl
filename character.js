@@ -1,16 +1,18 @@
 import { CLASSES, MAX_LEVEL, MIN_LEVEL, NAME_PATTERN, RACES, ROLES, classIcon, xpToNextLevel } from './data.js'
-import { farmRates, getZone } from './zones.js'
+import { getZone } from './zones.js'
 import { averageItemLevel, characterPower } from './power.js'
-import { KILLS_PER_HOUR, QUEST_HOURS, SLOTS, bestLoadout, getItem, getQuest, itemKey, levelToUse, nextQuest, rollKills } from './gear.js'
+import { SLOTS, bestLoadout, getItem, getQuest, itemKey, levelToUse, questRewardsFor, rollMobLoot } from './gear.js'
+import { farmRates, questXp } from './combat.js'
+import { activeQuests, creditKill, nextAction, objectivesOf } from './quests.js'
 
 const lookup = (table, key) => (Object.hasOwn(table, key) ? table[key] : undefined)
 const BAG_SIZE = 16
 const LOG_SIZE = 20
-// Long offline stretches are farmed in chunks this long, putting on new gear between them.
-const MAX_SEGMENT_HOURS = 1
 
 export default class Character {
-  constructor({ id = crypto.randomUUID(), characterName, characterClass, characterSpec, characterRace, characterRole, characterLevel = MIN_LEVEL, characterXp = 0, zone = null, equipment = {}, bag = [], questsDone = [], questProgress = 0, killProgress = 0, lootLog = [] }) {
+  #planned = null // the next action in the current zone, kept until there's time to do it
+
+  constructor({ id = crypto.randomUUID(), characterName, characterClass, characterSpec, characterRace, characterRole, characterLevel = MIN_LEVEL, characterXp = 0, zone = null, equipment = {}, bag = [], questsDone = [], questLog = {}, timeBank = 0, lootLog = [] }) {
     this.id = id
     this.characterName = Character.formatName(characterName)
     this.characterClass = characterClass
@@ -23,9 +25,9 @@ export default class Character {
     this.equipment = equipment // { slot: itemId }
     this.bag = bag // item ids kept until the character is high enough level to wear them
     this.questsDone = questsDone // quest ids
-    this.questProgress = questProgress // hours spent toward the next quest in the current zone
-    this.killProgress = killProgress // fraction of the next kill
-    this.lootLog = lootLog // newest first: { item, source, at, equipped }
+    this.questLog = questLog // { questId: [count per objective] } for quests with progress
+    this.timeBank = timeBank // farmed seconds not yet spent on a kill or quest
+    this.lootLog = lootLog // newest first: { item, source, at, equipped, quest? }
   }
 
   get xpToNextLevel() {
@@ -41,7 +43,7 @@ export default class Character {
     return averageItemLevel(this)
   }
 
-  // Hourly rates in the current zone (see farmRates), or undefined when idle.
+  // Hourly grinding rates in the current zone (see farmRates), or undefined when idle.
   get rates() {
     const zone = getZone(this.zone)
     return zone ? farmRates(this, zone) : undefined
@@ -61,68 +63,81 @@ export default class Character {
     return rate > 0 ? (this.xpToNextLevel - this.characterXp) / rate : Infinity
   }
 
-  // The quest the character is working on in its current zone, if any.
-  get currentQuest() {
-    return this.zone ? nextQuest(this, this.zone, new Set(this.questsDone)) : undefined
+  // Quest ids being worked on in the current zone.
+  get activeQuests() {
+    return this.zone ? activeQuests(this, this.zone) : []
   }
 
-  // Farms for `hours`. Rates are re-checked after each level and each new piece of gear, since both change
-  // solo power. Mobs drop loot and zone quests complete at the level the character was when it happened.
-  // Returns the copper earned, levels gained and newly equipped item ids.
+  // What the character does next in its zone (see nextAction in quests.js), or undefined.
+  get plannedAction() {
+    if (!this.zone) return undefined
+    if (this.#planned?.zone !== this.zone) this.#planned = { zone: this.zone, action: nextAction(this, this.zone) }
+    return this.#planned.action
+  }
+
+  // Farms for `hours`: one fight or quest turn-in after another, each taking its own time. Leftover time
+  // carries over to the next call. Kills and quests pay XP, money and gear at the character's level when
+  // they happen. Returns the copper earned, levels gained and newly equipped item ids.
   farm(hours, now = Date.now()) {
     const zone = getZone(this.zone)
     if (!zone || hours <= 0) return { copper: 0, levels: 0, upgrades: [] }
 
     const wornBefore = new Set(Object.values(this.equipment))
-    let remaining = hours
     let levels = 0
     let copper = 0
     const acquired = []
-    while (remaining > 0) {
-      const rates = farmRates(this, zone)
-      const hoursToLevel = rates.xpPerHour > 0 ? (this.xpToNextLevel - this.characterXp) / rates.xpPerHour : Infinity
-      const segment = Math.min(remaining, hoursToLevel, MAX_SEGMENT_HOURS)
-      const found = this.#adventure(zone.name, segment, rates.speed)
-      acquired.push(...found)
-      copper += rates.copperPerHour * segment
-      remaining -= segment
-      const levelUp = segment >= hoursToLevel
-      if (levelUp) {
-        this.characterLevel += 1
-        this.characterXp = 0
-        levels += 1
-      } else {
-        this.characterXp += rates.xpPerHour * segment
+    this.timeBank += hours * 3600
+    for (;;) {
+      const action = this.plannedAction
+      if (!action) {
+        this.timeBank = 0 // nothing here the character can beat
+        break
       }
-      if (found.length || levelUp) this.equipBest(found.map((a) => a.item))
+      const seconds = action.fight ? action.fight.seconds : action.seconds
+      if (seconds > this.timeBank) break
+      this.timeBank -= seconds
+      this.#planned = null
+
+      const found = []
+      let xp
+      if (action.fight) {
+        const { entry, mob } = action.fight
+        creditKill(this, zone.name, entry)
+        xp = action.fight.xp
+        copper += action.fight.copper
+        for (const item of rollMobLoot(entry)) {
+          if (levelToUse(this, getItem(item)) < Infinity) found.push({ item, source: mob.name })
+        }
+      } else {
+        const quest = getQuest(action.questId)
+        this.questsDone.push(action.questId)
+        delete this.questLog[action.questId]
+        xp = questXp(this.characterLevel, quest)
+        copper += quest.money ?? 0
+        for (const item of questRewardsFor(this, quest)) found.push({ item, source: quest.title, quest: true })
+      }
+      const gained = this.#gainXp(xp)
+      levels += gained
+      if (found.length || gained) this.equipBest(found.map((a) => a.item))
+      acquired.push(...found)
     }
     const upgrades = [...new Set(Object.values(this.equipment))].filter((id) => !wornBefore.has(id))
     this.#log(acquired, upgrades, now)
     return { copper, levels, upgrades }
   }
 
-  // Kills and quests for `hours` at `speed` times the base pace. Returns the usable items found.
-  #adventure(zoneName, hours, speed) {
-    const acquired = []
-    this.killProgress += hours * KILLS_PER_HOUR * speed
-    const kills = Math.floor(this.killProgress)
-    this.killProgress -= kills
-    for (const item of rollKills(zoneName, this.characterLevel, kills)) {
-      if (levelToUse(this, getItem(item)) < Infinity) acquired.push({ item, source: 'Drop' })
+  // Adds XP, leveling up as many times as it covers. Returns the levels gained.
+  #gainXp(xp) {
+    if (!xp || this.characterLevel >= MAX_LEVEL) return 0
+    this.characterXp += xp
+    let levels = 0
+    while (this.characterLevel < MAX_LEVEL && this.characterXp >= this.xpToNextLevel) {
+      this.characterXp -= this.xpToNextLevel
+      this.characterLevel += 1
+      levels += 1
     }
-
-    this.questProgress += hours * speed
-    while (this.questProgress >= QUEST_HOURS) {
-      const next = nextQuest(this, zoneName, new Set(this.questsDone))
-      if (!next) {
-        this.questProgress = 0
-        break
-      }
-      this.questProgress -= QUEST_HOURS
-      this.questsDone.push(next.id)
-      for (const item of next.rewards) acquired.push({ item, source: next.quest.title })
-    }
-    return acquired
+    if (this.characterLevel >= MAX_LEVEL) this.characterXp = 0
+    return levels
   }
 
   // Puts on the best gear from what's worn, the bag and `newItems`. Keeps items that need a higher level
@@ -141,8 +156,8 @@ export default class Character {
   }
 
   #log(acquired, upgrades, now) {
-    const notable = acquired.filter(({ item, source }) => source !== 'Drop' || getItem(item).quality >= 2 || upgrades.includes(item))
-    const entries = notable.map(({ item, source }) => ({ item, source, at: now, equipped: upgrades.includes(item) }))
+    const notable = acquired.filter(({ item, quest }) => quest || getItem(item).quality >= 2 || upgrades.includes(item))
+    const entries = notable.map(({ item, source, quest }) => ({ item, source, at: now, equipped: upgrades.includes(item), ...(quest && { quest }) }))
     this.lootLog = [...entries.reverse(), ...this.lootLog].slice(0, LOG_SIZE)
   }
 
@@ -152,12 +167,19 @@ export default class Character {
     const fraction = (value, max) => (Number.isFinite(Number(value)) ? Math.min(Math.max(Number(value), 0), max) : 0)
     const equipped = data.equipment && typeof data.equipment === 'object' ? Object.values(data.equipment) : []
     this.questsDone = [...new Set(Array.isArray(data.questsDone) ? data.questsDone.map(Number).filter((id) => getQuest(id)) : [])]
-    this.questProgress = fraction(data.questProgress, QUEST_HOURS)
-    this.killProgress = fraction(data.killProgress, 1)
+    const done = new Set(this.questsDone)
+    this.questLog = {}
+    for (const [key, counts] of Object.entries(data.questLog && typeof data.questLog === 'object' ? data.questLog : {})) {
+      const id = Number(key)
+      if (!getQuest(id) || done.has(id) || !Array.isArray(counts)) continue
+      const objectives = objectivesOf(id)
+      if (counts.length === objectives.length) this.questLog[id] = objectives.map((o, i) => Math.floor(fraction(counts[i], o.count)))
+    }
+    this.timeBank = fraction(data.timeBank, 3600)
     this.lootLog = (Array.isArray(data.lootLog) ? data.lootLog : [])
       .filter((e) => e && itemKey(e.item) !== undefined && typeof e.source === 'string' && Number.isFinite(Number(e.at)))
       .slice(0, LOG_SIZE)
-      .map((e) => ({ item: itemKey(e.item), source: e.source.slice(0, 100), at: Number(e.at), equipped: e.equipped === true }))
+      .map((e) => ({ item: itemKey(e.item), source: e.source.slice(0, 100), at: Number(e.at), equipped: e.equipped === true, ...(e.quest === true && { quest: true }) }))
     this.equipment = {}
     this.bag = []
     this.equipBest([...ids(equipped), ...ids(data.bag)])

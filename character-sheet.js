@@ -1,6 +1,8 @@
-import { el, formatDuration, formatNumber, money } from './dom.js'
-import { CLASS_BITS, INVENTORY_TYPES, QUALITIES, QUEST_HOURS, RACE_BITS, SLOTS, getItem, itemTypeName } from './gear.js'
+import { el, formatNumber, money } from './dom.js'
+import { CLASS_BITS, INVENTORY_TYPES, QUALITIES, QUEST_ITEMS, RACE_BITS, SLOTS, getItem, getQuest, itemTypeName } from './gear.js'
 import { SCHOOLS, STAT_NAMES, characterStats } from './stats.js'
+import { drinkFor, foodFor, getMob } from './combat.js'
+import { objectivesOf, questProgress } from './quests.js'
 
 const LEFT = ['head', 'neck', 'shoulder', 'back', 'chest', 'shirt', 'tabard', 'wrist']
 const RIGHT = ['hands', 'waist', 'legs', 'feet', 'finger1', 'finger2', 'trinket1', 'trinket2']
@@ -130,9 +132,12 @@ function renderStats(character, s) {
   const { melee, ranged, defenses, spell } = s
   const rates = character.rates
   return el('section', { class: 'sheet-stats', 'aria-label': 'Stats' },
-    group('Power', [
+    group('Combat', [
       ['Power Level', Math.round(character.power.solo)],
       ['Item Level', Math.floor(character.itemLevel)],
+      ['Combat / Eat', rates?.beatable ? `${Math.round(rates.fightSeconds)}s / ${Math.round(rates.eatSeconds)}s` : '—'],
+      ['Food', foodFor(character.characterLevel).name],
+      s.mana > 0 && ['Drink', drinkFor(character.characterLevel).name],
     ]),
     group('Farm', [
       ['Kills / hr', rates ? formatNumber(rates.killsPerHour) : '—'],
@@ -177,29 +182,58 @@ function renderStats(character, s) {
       ['Block', pct(defenses.block)],
       defenses.blockValue > 0 && ['Block Value', defenses.blockValue],
       s.hp5 > 0 && ['Health per 5 sec', s.hp5],
+      ['Health Regen', `${Math.floor(s.healthRegen)} per 5 sec (out of combat)`],
     ]),
     group('Resistances', SCHOOLS.map((school) => [capitalize(school), s.resist[school]])),
-    el('p', { class: 'note' }, 'Power level sets farming speed. Item level is the average of worn gear (empty slots count as 0). Farm rates are for the current zone. Stats are without talents or buffs.'),
+    el('p', { class: 'note' }, 'Power level sets damage in fights. After each fight the character eats and drinks back what they lost; health, mana, armor and spirit regen set how long that takes. Food and drink are the best vendor kind for their level, free. Item level is the average of worn gear (empty slots count as 0). Farm rates are for grinding the current zone, before quest rewards. Stats are without talents or buffs.'),
   )
 }
 
+// What the character is doing right now, e.g. "Hunting Kobold Vermin (level 2) for "Kobold Camp Cleanup"."
+function describeAction(character) {
+  if (!character.zone) return 'Send this character to a zone to quest and collect loot.'
+  const action = character.plannedAction
+  if (!action) return `Nothing in ${character.zone} it can beat. Try an easier zone.`
+  const title = action.questId && getQuest(action.questId).title
+  if (!action.fight) return `Turning in "${title}".`
+  const target = `${action.fight.mob.name} (level ${action.fight.level})`
+  return title ? `Hunting ${target} for "${title}".` : `Grinding ${target}.`
+}
+
+function objectiveName(o) {
+  if (o.item) return QUEST_ITEMS[o.item] ?? 'Quest item'
+  return (getMob(o.id) ?? getMob(o.sources[0]))?.name ?? 'Kills'
+}
+
+function renderQuestLog(character) {
+  const ids = character.activeQuests
+  if (!ids.length) return el('p', { class: 'empty' }, `No quests left in ${character.zone} at this level.`)
+  return el('ul', { class: 'quest-log' }, ids.map((id) => {
+    const quest = getQuest(id)
+    const counts = questProgress(character, id)
+    const objectives = objectivesOf(id)
+    return el('li', {},
+      el('span', { class: 'quest-title' }, `[${quest.level}] ${quest.title}`),
+      objectives.length
+        ? el('ul', { class: 'quest-objectives' }, objectives.map((o, i) =>
+          el('li', { class: counts[i] >= o.count ? 'done' : null }, `${objectiveName(o)}: ${counts[i]}/${o.count}`)))
+        : el('span', { class: 'quest-objectives' }, ' (errand)'),
+    )
+  }))
+}
+
 function renderProgress(character) {
-  const quest = character.currentQuest
   return el('section', { class: 'sheet-panel', 'aria-label': 'Quests and loot' },
     el('h3', {}, 'Questing'),
-    el('p', {}, `${character.questsDone.length} quests completed.`),
-    character.zone
-      ? el('p', {}, quest
-        ? `Working on "${quest.quest.title}" (${formatDuration((QUEST_HOURS - character.questProgress) / character.rates.speed)} left).`
-        : `No quests with usable rewards left in ${character.zone} at this level.`)
-      : el('p', {}, 'Send this character to a zone to quest and collect loot.'),
+    el('p', {}, `${character.questsDone.length} quests completed. ${describeAction(character)}`),
+    character.zone && renderQuestLog(character),
     el('h3', {}, 'Recent Loot'),
     character.lootLog.length
       ? el('ul', { class: 'loot-log' }, character.lootLog.map((entry) => {
         const item = getItem(entry.item)
         return el('li', { class: `slot slot-bottom q-${QUALITIES[item.quality]}`, tabindex: 0 },
           el('span', { class: 'item-name' }, item.name),
-          el('span', { class: 'loot-source' }, ` ${entry.source === 'Drop' ? 'from a drop' : `from "${entry.source}"`}${entry.equipped ? ', equipped' : ''}`),
+          el('span', { class: 'loot-source' }, ` ${entry.quest ? `from "${entry.source}"` : entry.source === 'Drop' ? 'from a drop' : `from ${entry.source}`}${entry.equipped ? ', equipped' : ''}`),
           renderTooltip(item),
         )
       }))

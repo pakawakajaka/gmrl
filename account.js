@@ -34,7 +34,6 @@ export default class Account {
     const character = this.getCharacter(characterId)
     if (!character || zoneLockReason(character, getZone(zoneName))) return false
     this.tick(now)
-    if (character.zone !== zoneName) character.questProgress = 0
     character.zone = zoneName
     return true
   }
@@ -44,7 +43,7 @@ export default class Account {
     if (!character) return
     this.tick(now)
     character.zone = null
-    character.questProgress = 0
+    character.timeBank = 0
   }
 
   getCharacter(id) {
@@ -90,7 +89,7 @@ export default class Account {
       .map((c) => ({ ...c, characterSpec: c.characterSpec ?? defaultSpec(c.characterClass, c.characterRole) }))
       .filter((c) => Object.keys(Character.validate(c)).length === 0)
       .map((c) => {
-        const character = new Character({ ...c, characterXp: 0, zone: null, equipment: {}, bag: [], questsDone: [], questProgress: 0, killProgress: 0, lootLog: [] })
+        const character = new Character({ ...c, characterXp: 0, zone: null, equipment: {}, bag: [], questsDone: [], questLog: {}, timeBank: 0, lootLog: [] })
         const xp = Number(c.characterXp)
         if (Number.isFinite(xp) && xp > 0 && xp < character.xpToNextLevel) character.characterXp = xp
         if (!zoneLockReason(character, getZone(c.zone))) character.zone = c.zone

@@ -62,6 +62,14 @@ function manaRegenPerSecond(cls, spi) {
     default: return 0
   }
 }
+// Out-of-combat health regen from spirit (CMaNGOS OCTRegenHPPerSpirit, per 2-second tick).
+function healthRegenPerSecond(cls, spi) {
+  const perTick = {
+    Druid: spi * 0.11 + 1, Hunter: spi * 0.43 - 5.5, Mage: spi * 0.11 + 1, Paladin: spi * 0.25, Priest: spi * 0.15 + 1.4,
+    Rogue: spi * 0.84 - 13, Shaman: spi * 0.28 - 3.6, Warlock: spi * 0.12 + 1.5, Warrior: spi * 1.26 - 22.6,
+  }[cls] ?? 0
+  return Math.max(0, perTick) / 2
+}
 
 export function equippedItems(character) {
   return Object.entries(character.equipment)
@@ -163,5 +171,5 @@ export function characterStats(character) {
     mp5: bonus.mp5 ?? 0,
   }
 
-  return { stats, health, mana, melee, ranged, defenses, spell, resist, hp5: bonus.hp5 ?? 0 }
+  return { stats, health, mana, melee, ranged, defenses, spell, resist, hp5: bonus.hp5 ?? 0, healthRegen: healthRegenPerSecond(cls, spi) * 5 }
 }

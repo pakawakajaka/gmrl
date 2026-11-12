@@ -1,6 +1,7 @@
 import { badge, el, formatDuration, formatNumber, money } from './dom.js'
 import { MAX_LEVEL } from './data.js'
-import { CONTINENTS, ZONES, farmRates, getZone, zoneDifficulty, zoneLockReason } from './zones.js'
+import { CONTINENTS, ZONES, getZone, zoneDifficulty, zoneLockReason } from './zones.js'
+import { farmRates } from './combat.js'
 import { renderSortControl, sortCharacters } from './sort.js'
 
 export function renderFarm({ account, selectedId, sortKey, onSelect, onSort, onSend, onRecall }) {
@@ -98,7 +99,7 @@ function updateProgress(card, character) {
   xpText.textContent = `${formatNumber(xp)} / ${formatNumber(needed)} XP`
   eta.textContent = !character.zone ? ''
     : character.xpPerHour > 0 ? `Level ${character.characterLevel + 1} in ${formatDuration(character.hoursToLevel)}`
-      : 'No XP here'
+      : character.rates.beatable ? 'No XP here' : 'Mobs too strong'
 }
 
 function renderZoneTables(account, character, onSend, onRecall) {
@@ -109,7 +110,9 @@ function renderZoneTables(account, character, onSend, onRecall) {
       el('span', { class: 'quest-hint', tabindex: 0, 'aria-label': 'How farming rates work', 'aria-describedby': 'farm-rules' },
         el('span', { class: 'quest-mark', 'aria-hidden': 'true' }, '!'),
         el('span', { class: 'hint-text', id: 'farm-rules', role: 'tooltip' },
-          'Power level against the mobs sets the kill speed, which scales XP and gold. ',
+          'Characters fight the mobs in their zone. Power level sets their damage, mob health sets how long each fight lasts, ',
+          'and they eat and drink back up after (free vendor food and water for their level; health, mana, armor and spirit regen set how long). Quests come first: they hunt whatever their quests need, ',
+          'then grind anything they can beat. Rates here are for grinding; quest XP, gold and gear come on top. ',
           'XP falls off as mobs drop below your level and stops once they turn gray; gold keeps coming.'),
       )),
     el('div', { class: 'continents' }, CONTINENTS.map((continent) => el('section', { class: 'continent', 'aria-labelledby': `continent-${continent.replace(/\W/g, '')}` },
@@ -137,10 +140,11 @@ function renderZoneRow(account, character, zone, onSend, onRecall) {
   const lockReason = zoneLockReason(character, zone)
   const isHere = character.zone === zone.name
   const rates = farmRates(character, zone)
-  const speed = `Kill speed ×${rates.speed.toFixed(2)} (power level vs level ${rates.mobLevel} mobs)`
+  const [lo, hi] = rates.mobLevels ?? []
+  const fights = !rates.beatable ? 'Mobs here are too strong'
+    : `Level ${lo === hi ? lo : `${lo}–${hi}`} mobs: ${Math.round(rates.fightSeconds)}s fights, ${Math.round(rates.eatSeconds)}s eating, ${formatNumber(rates.killsPerHour)} kills/hr`
   const xpNote = character.characterLevel >= MAX_LEVEL ? 'Max level'
-    : rates.xpFactor === 0 ? 'Gray: no XP'
-      : rates.xpFactor < 1 ? `XP ×${rates.xpFactor.toFixed(2)} (mobs below your level)` : null
+    : rates.beatable && rates.xpPerHour === 0 ? 'Gray: no XP' : null
   const farmers = account.characters.filter((c) => c.zone === zone.name)
   const focusKey = `zone-${zone.name}`
 
@@ -163,9 +167,9 @@ function renderZoneRow(account, character, zone, onSend, onRecall) {
     el('th', { scope: 'row' }, zone.name),
     el('td', {}, badge(zone.faction)),
     el('td', { class: 'num' }, zone.minLevel === zone.maxLevel ? String(zone.minLevel) : `${zone.minLevel}–${zone.maxLevel}`),
-    el('td', { class: `num${xpNote ? ' reduced' : ''}`, title: [speed, xpNote].filter(Boolean).join('. ') },
+    el('td', { class: `num${xpNote || !rates.beatable ? ' reduced' : ''}`, title: [fights, xpNote].filter(Boolean).join('. ') },
       rates.xpPerHour > 0 ? formatNumber(rates.xpPerHour) : '—'),
-    el('td', { class: 'num', title: speed }, money(rates.copperPerHour)),
+    el('td', { class: 'num', title: fights }, rates.beatable ? money(rates.copperPerHour) : '—'),
     el('td', { class: 'zone-farmers' }, farmers.length
       ? farmers.map((c, i) => [i > 0 && ', ', el('span', { style: { color: c.classColor } }, c.characterName)])
       : ''),
