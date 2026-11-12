@@ -1,6 +1,6 @@
 import { badge, el, formatDuration, formatNumber, money } from './dom.js'
 import { MAX_LEVEL } from './data.js'
-import { CONTINENTS, ZONES, getZone, xpPerHour, zoneDifficulty, zoneLockReason } from './zones.js'
+import { CONTINENTS, ZONES, farmRates, getZone, zoneDifficulty, zoneLockReason } from './zones.js'
 
 export function renderFarm({ account, selectedId, onSelect, onSend, onRecall }) {
   const selected = account.getCharacter(selectedId) ?? account.characters[0]
@@ -51,6 +51,7 @@ function renderFarmer(character, isSelected, onSelect, onRecall) {
       el('img', { class: 'class-icon', src: character.classIcon, alt: '', width: 40, height: 40 }),
       el('span', { class: 'farmer-info' },
         el('span', { class: 'farmer-level' }, `Level ${character.characterLevel} ${character.characterClass}`),
+        el('span', { class: 'farmer-level' }, `Power level ${formatNumber(Math.round(character.power.solo))}`),
         el('span', { class: 'farmer-zone' }, character.zone ?? 'Idle',
           zone && el('span', { class: 'visually-hidden' }, ` (${difficulty} difficulty)`)),
       ),
@@ -102,7 +103,9 @@ function renderZoneTables(account, character, onSend, onRecall) {
   return el('div', { class: 'zone-tables' },
     el('p', { class: 'zone-intro' },
       'Send ', el('strong', { style: { color: character.classColor } }, character.characterName),
-      ` (level ${character.characterLevel} ${character.faction}) to farm. XP drops off once a zone is outleveled.`),
+      ` (level ${character.characterLevel} ${character.faction}, power level ${formatNumber(Math.round(character.power.solo))}, item level ${formatNumber(character.itemLevel)}) to farm. `,
+      'Power level against the mobs sets the kill speed, which scales XP and gold. ',
+      'XP falls off as mobs drop below your level and stops once they turn gray; gold keeps coming.'),
     el('div', { class: 'continents' }, CONTINENTS.map((continent) => el('section', { class: 'continent', 'aria-labelledby': `continent-${continent.replace(/\W/g, '')}` },
       el('h3', { id: `continent-${continent.replace(/\W/g, '')}` }, continent),
       el('div', { class: 'table-scroll' },
@@ -127,7 +130,11 @@ function renderZoneTables(account, character, onSend, onRecall) {
 function renderZoneRow(account, character, zone, onSend, onRecall) {
   const lockReason = zoneLockReason(character, zone)
   const isHere = character.zone === zone.name
-  const xp = xpPerHour(character, zone)
+  const rates = farmRates(character, zone)
+  const speed = `Kill speed ×${rates.speed.toFixed(2)} (power level vs level ${rates.mobLevel} mobs)`
+  const xpNote = character.characterLevel >= MAX_LEVEL ? 'Max level'
+    : rates.xpFactor === 0 ? 'Gray: no XP'
+      : rates.xpFactor < 1 ? `XP ×${rates.xpFactor.toFixed(2)} (mobs below your level)` : null
   const farmers = account.characters.filter((c) => c.zone === zone.name)
   const focusKey = `zone-${zone.name}`
 
@@ -150,9 +157,9 @@ function renderZoneRow(account, character, zone, onSend, onRecall) {
     el('th', { scope: 'row' }, zone.name),
     el('td', {}, badge(zone.faction)),
     el('td', { class: 'num' }, zone.minLevel === zone.maxLevel ? String(zone.minLevel) : `${zone.minLevel}–${zone.maxLevel}`),
-    el('td', { class: `num${xp < zone.xpPerHour ? ' reduced' : ''}`, title: xp < zone.xpPerHour && zone.xpPerHour > 0 ? 'Reduced: outleveled or max level' : null },
-      xp > 0 ? formatNumber(xp) : '—'),
-    el('td', { class: 'num' }, money(zone.copperPerHour)),
+    el('td', { class: `num${xpNote ? ' reduced' : ''}`, title: [speed, xpNote].filter(Boolean).join('. ') },
+      rates.xpPerHour > 0 ? formatNumber(rates.xpPerHour) : '—'),
+    el('td', { class: 'num', title: speed }, money(rates.copperPerHour)),
     el('td', { class: 'zone-farmers' }, farmers.length
       ? farmers.map((c, i) => [i > 0 && ', ', el('span', { style: { color: c.classColor } }, c.characterName)])
       : ''),

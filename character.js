@@ -1,10 +1,13 @@
 import { CLASSES, MAX_LEVEL, MIN_LEVEL, NAME_PATTERN, RACES, ROLES, classIcon, xpToNextLevel } from './data.js'
-import { getZone, xpPerHour } from './zones.js'
+import { farmRates, getZone } from './zones.js'
+import { averageItemLevel, characterPower } from './power.js'
 import { KILLS_PER_HOUR, QUEST_HOURS, SLOTS, bestLoadout, getItem, getQuest, itemKey, levelToUse, nextQuest, rollKills } from './gear.js'
 
 const lookup = (table, key) => (Object.hasOwn(table, key) ? table[key] : undefined)
 const BAG_SIZE = 16
 const LOG_SIZE = 20
+// Long offline stretches are farmed in chunks this long, putting on new gear between them.
+const MAX_SEGMENT_HOURS = 1
 
 export default class Character {
   constructor({ id = crypto.randomUUID(), characterName, characterClass, characterSpec, characterRace, characterRole, characterLevel = MIN_LEVEL, characterXp = 0, zone = null, equipment = {}, bag = [], questsDone = [], questProgress = 0, killProgress = 0, lootLog = [] }) {
@@ -29,13 +32,27 @@ export default class Character {
     return xpToNextLevel(this.characterLevel)
   }
 
-  get xpPerHour() {
+  // { solo, party }: see power.js. The UI calls solo power "power level".
+  get power() {
+    return characterPower(this)
+  }
+
+  get itemLevel() {
+    return averageItemLevel(this)
+  }
+
+  // Hourly rates in the current zone (see farmRates), or undefined when idle.
+  get rates() {
     const zone = getZone(this.zone)
-    return zone ? xpPerHour(this, zone) : 0
+    return zone ? farmRates(this, zone) : undefined
+  }
+
+  get xpPerHour() {
+    return this.rates?.xpPerHour ?? 0
   }
 
   get copperPerHour() {
-    return getZone(this.zone)?.copperPerHour ?? 0
+    return this.rates?.copperPerHour ?? 0
   }
 
   // Hours until the next level at the current zone's rate, or Infinity if not gaining XP.
@@ -49,44 +66,52 @@ export default class Character {
     return this.zone ? nextQuest(this, this.zone, new Set(this.questsDone)) : undefined
   }
 
-  // Farms for `hours`, leveling up as XP fills (the XP rate is re-checked after each level). Mobs drop
-  // loot and zone quests complete at the level the character was when it happened.
+  // Farms for `hours`. Rates are re-checked after each level and each new piece of gear, since both change
+  // solo power. Mobs drop loot and zone quests complete at the level the character was when it happened.
   // Returns the copper earned, levels gained and newly equipped item ids.
   farm(hours, now = Date.now()) {
     const zone = getZone(this.zone)
     if (!zone || hours <= 0) return { copper: 0, levels: 0, upgrades: [] }
 
+    const wornBefore = new Set(Object.values(this.equipment))
     let remaining = hours
     let levels = 0
+    let copper = 0
     const acquired = []
     while (remaining > 0) {
-      const rate = this.characterLevel < MAX_LEVEL ? xpPerHour(this, zone) : 0
-      const hoursToLevel = rate > 0 ? (this.xpToNextLevel - this.characterXp) / rate : Infinity
-      const segment = Math.min(remaining, hoursToLevel)
-      this.#adventure(zone.name, segment, acquired)
+      const rates = farmRates(this, zone)
+      const hoursToLevel = rates.xpPerHour > 0 ? (this.xpToNextLevel - this.characterXp) / rates.xpPerHour : Infinity
+      const segment = Math.min(remaining, hoursToLevel, MAX_SEGMENT_HOURS)
+      const found = this.#adventure(zone.name, segment, rates.speed)
+      acquired.push(...found)
+      copper += rates.copperPerHour * segment
       remaining -= segment
-      if (segment < hoursToLevel) {
-        this.characterXp += rate * segment
-        break
+      const levelUp = segment >= hoursToLevel
+      if (levelUp) {
+        this.characterLevel += 1
+        this.characterXp = 0
+        levels += 1
+      } else {
+        this.characterXp += rates.xpPerHour * segment
       }
-      this.characterLevel += 1
-      this.characterXp = 0
-      levels += 1
+      if (found.length || levelUp) this.equipBest(found.map((a) => a.item))
     }
-    const upgrades = this.equipBest(acquired.map((a) => a.item))
+    const upgrades = [...new Set(Object.values(this.equipment))].filter((id) => !wornBefore.has(id))
     this.#log(acquired, upgrades, now)
-    return { copper: zone.copperPerHour * hours, levels, upgrades }
+    return { copper, levels, upgrades }
   }
 
-  #adventure(zoneName, hours, acquired) {
-    this.killProgress += hours * KILLS_PER_HOUR
+  // Kills and quests for `hours` at `speed` times the base pace. Returns the usable items found.
+  #adventure(zoneName, hours, speed) {
+    const acquired = []
+    this.killProgress += hours * KILLS_PER_HOUR * speed
     const kills = Math.floor(this.killProgress)
     this.killProgress -= kills
     for (const item of rollKills(zoneName, this.characterLevel, kills)) {
       if (levelToUse(this, getItem(item)) < Infinity) acquired.push({ item, source: 'Drop' })
     }
 
-    this.questProgress += hours
+    this.questProgress += hours * speed
     while (this.questProgress >= QUEST_HOURS) {
       const next = nextQuest(this, zoneName, new Set(this.questsDone))
       if (!next) {
@@ -97,6 +122,7 @@ export default class Character {
       this.questsDone.push(next.id)
       for (const item of next.rewards) acquired.push({ item, source: next.quest.title })
     }
+    return acquired
   }
 
   // Puts on the best gear from what's worn, the bag and `newItems`. Keeps items that need a higher level

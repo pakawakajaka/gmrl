@@ -1,9 +1,13 @@
 import { MAX_LEVEL } from './data.js'
+import { KILLS_PER_HOUR } from './gear.js'
+import { characterPower, levelPower } from './power.js'
 
 export const CONTINENTS = ['Eastern Kingdoms', 'Kalimdor']
 
-// Mobs turn gray (no XP) this many levels above a zone's max level; XP scales down linearly until then.
-const GRAY_LEVELS = 6
+// A kill takes FIGHT_SECONDS against a mob of equal power, plus OVERHEAD_SECONDS of looting, walking and
+// resting that no amount of power removes. Together they make the base KILLS_PER_HOUR.
+const FIGHT_SECONDS = 40
+const OVERHEAD_SECONDS = 3600 / KILLS_PER_HOUR - FIGHT_SECONDS
 
 const gold = (g, s = 0) => g * 10000 + s * 100
 
@@ -11,8 +15,9 @@ const zone = (name, continent, faction, minLevel, maxLevel, xpPerHour, copperPer
   Object.freeze({ name, continent, faction, minLevel, maxLevel, xpPerHour, copperPerHour })
 
 // Every Classic zone with mobs to farm. Cities and battlegrounds are left out.
-// Level ranges are from the games; hourly rates are this game's balance values, loosely based on typical
-// leveling and farming speeds (e.g. Stranglethorn, Tanaris, Eastern Plaguelands and Winterspring as gold spots).
+// Level ranges are from the games; hourly rates are this game's balance values for a character with typical
+// gear for its level, loosely based on typical leveling and farming speeds (e.g. Stranglethorn, Tanaris,
+// Eastern Plaguelands and Winterspring as gold spots). Actual rates depend on the character's solo power.
 export const ZONES = [
   zone('Elwynn Forest', 'Eastern Kingdoms', 'Alliance', 1, 10, 9000, gold(0, 6)),
   zone('Dun Morogh', 'Eastern Kingdoms', 'Alliance', 1, 10, 8500, gold(0, 5)),
@@ -69,18 +74,53 @@ export function zoneLockReason(character, zone) {
   return ''
 }
 
-export function xpPerHour(character, zone) {
-  if (character.characterLevel >= MAX_LEVEL) return 0
-  const levelsOver = character.characterLevel - zone.maxLevel
-  if (levelsOver <= 0) return zone.xpPerHour
-  return zone.xpPerHour * Math.max(0, 1 - levelsOver / GRAY_LEVELS)
+// Classic gray level: mobs at or below it give no XP (CMaNGOS Formulas.h).
+export function grayLevel(level) {
+  if (level <= 5) return 0
+  if (level <= 39) return level - 5 - Math.floor(level / 10)
+  if (level <= 59) return level - 1 - Math.floor(level / 5)
+  return level - 9
+}
+
+const ZERO_DIFFERENCE = [[8, 5], [10, 6], [12, 7], [16, 8], [20, 9], [30, 11], [40, 12], [45, 13], [50, 14], [55, 15], [60, 16]]
+const zeroDifference = (level) => ZERO_DIFFERENCE.find(([below]) => level < below)?.[1] ?? 17
+
+// Share of full XP a mob gives (Classic): +5% per level above you (up to +4), falling to nothing at gray.
+export function mobXpFactor(level, mobLevel) {
+  if (mobLevel <= grayLevel(level)) return 0
+  if (mobLevel >= level) return 1 + 0.05 * Math.min(4, mobLevel - level)
+  return 1 - (level - mobLevel) / zeroDifference(level)
+}
+
+// Characters fight the mobs nearest their own level that the zone has.
+export const mobLevel = (character, zone) => Math.min(Math.max(character.characterLevel, zone.minLevel), zone.maxLevel)
+
+// What the character earns per hour in the zone. Solo power against the mobs' power sets the kill speed,
+// which scales XP and gold alike. XP also falls off as the mobs get lower than the character and stops
+// once they're gray; gold doesn't, so outleveled zones still pay (faster, even).
+export function farmRates(character, zone) {
+  const power = characterPower(character)
+  const mob = mobLevel(character, zone)
+  const powerRatio = power.solo / levelPower(mob)
+  const speed = (FIGHT_SECONDS + OVERHEAD_SECONDS) / (FIGHT_SECONDS / powerRatio + OVERHEAD_SECONDS)
+  const xpFactor = character.characterLevel >= MAX_LEVEL ? 0 : mobXpFactor(character.characterLevel, mob)
+  return {
+    power,
+    mobLevel: mob,
+    powerRatio,
+    speed,
+    xpFactor,
+    killsPerHour: KILLS_PER_HOUR * speed,
+    xpPerHour: zone.xpPerHour * speed * xpFactor,
+    copperPerHour: zone.copperPerHour * speed,
+  }
 }
 
 // Classic "con" color of a zone for a character, judged against the zone's typical (middle) mob level.
-// Gray matches where XP runs out in xpPerHour.
+// Gray is when even the zone's highest mobs are gray to the character, which is where XP stops.
 export function zoneDifficulty(character, zone) {
   const level = character.characterLevel
-  if (level - zone.maxLevel >= GRAY_LEVELS) return 'gray'
+  if (zone.maxLevel <= grayLevel(level)) return 'gray'
   const diff = Math.floor((zone.minLevel + zone.maxLevel) / 2) - level
   if (diff >= 5) return 'red'
   if (diff >= 3) return 'orange'

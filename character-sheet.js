@@ -129,6 +129,10 @@ function renderStats(character, s) {
   const damage = (d) => `${Math.floor(d.min)} - ${Math.floor(d.max)}`
   const { melee, ranged, defenses, spell } = s
   return el('section', { class: 'sheet-stats', 'aria-label': 'Stats' },
+    group('Power', [
+      ['Power Level', Math.round(character.power.solo)],
+      ['Item Level', Math.floor(character.itemLevel)],
+    ]),
     group('Base Stats', [
       ...Object.entries(STAT_NAMES).map(([key, name]) => [name, s.stats[key].total]),
       ['Health', s.health],
@@ -169,7 +173,7 @@ function renderStats(character, s) {
       s.hp5 > 0 && ['Health per 5 sec', s.hp5],
     ]),
     group('Resistances', SCHOOLS.map((school) => [capitalize(school), s.resist[school]])),
-    el('p', { class: 'note' }, 'Without talents or buffs.'),
+    el('p', { class: 'note' }, 'Power level sets farming speed. Item level is the average of worn gear (empty slots count as 0). Stats are without talents or buffs.'),
   )
 }
 
@@ -180,7 +184,7 @@ function renderProgress(character) {
     el('p', {}, `${character.questsDone.length} quests completed.`),
     character.zone
       ? el('p', {}, quest
-        ? `Working on "${quest.quest.title}" (${formatDuration(QUEST_HOURS - character.questProgress)} left).`
+        ? `Working on "${quest.quest.title}" (${formatDuration((QUEST_HOURS - character.questProgress) / character.rates.speed)} left).`
         : `No quests with usable rewards left in ${character.zone} at this level.`)
       : el('p', {}, 'Send this character to a zone to quest and collect loot.'),
     el('h3', {}, 'Recent Loot'),

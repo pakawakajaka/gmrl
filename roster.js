@@ -1,4 +1,4 @@
-import { badge, el } from './dom.js'
+import { badge, el, formatNumber } from './dom.js'
 import { ROLES } from './data.js'
 
 export function renderRoster({ account, selectedGuild, onSelectGuild, onReset, onSaveToFile }) {
@@ -62,6 +62,7 @@ function renderCharacterCard(character, account) {
         el('h3', { class: 'character-name' }, character.characterName),
         el('p', {}, `Level ${character.characterLevel} ${character.characterRace} ${character.characterSpec} ${character.characterClass}`),
         el('p', { class: 'badges' }, badge(character.characterRole), badge(character.faction)),
+        el('p', { class: 'farm-status' }, `Power level ${formatNumber(Math.round(character.power.solo))} · Item level ${formatNumber(character.itemLevel)}`),
         el('p', { class: 'guild-tags' }, guildNames.length ? guildNames.join(', ') : 'No guild'),
         el('p', { class: 'farm-status' }, character.zone ? `Farming in ${character.zone}` : 'Idle'),
       ),
