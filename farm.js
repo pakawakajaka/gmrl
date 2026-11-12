@@ -45,9 +45,9 @@ function renderFarmer(character, isSelected, onSelect, onRecall) {
       'data-focus-key': `select-${character.id}`,
       onclick: () => onSelect(character.id),
     },
+      el('span', { class: 'character-name', title: name }, name),
       el('img', { class: 'class-icon', src: character.classIcon, alt: '', width: 40, height: 40 }),
       el('span', { class: 'farmer-info' },
-        el('span', { class: 'character-name' }, name),
         el('span', { class: 'farmer-level' }, `Level ${character.characterLevel} ${character.characterClass}`),
         el('span', { class: 'farmer-zone' }, character.zone ?? 'Idle'),
       ),
@@ -99,7 +99,7 @@ function renderZoneTables(account, character, onSend, onRecall) {
     el('p', { class: 'zone-intro' },
       'Send ', el('strong', { style: { color: character.classColor } }, character.characterName),
       ` (level ${character.characterLevel} ${character.faction}) to farm. XP drops off once a zone is outleveled.`),
-    CONTINENTS.map((continent) => el('section', { class: 'continent', 'aria-labelledby': `continent-${continent.replace(/\W/g, '')}` },
+    el('div', { class: 'continents' }, CONTINENTS.map((continent) => el('section', { class: 'continent', 'aria-labelledby': `continent-${continent.replace(/\W/g, '')}` },
       el('h3', { id: `continent-${continent.replace(/\W/g, '')}` }, continent),
       el('div', { class: 'table-scroll' },
         el('table', { class: 'zone-table' },
@@ -116,7 +116,7 @@ function renderZoneTables(account, character, onSend, onRecall) {
             .map((zone) => renderZoneRow(account, character, zone, onSend, onRecall))),
         ),
       ),
-    )),
+    ))),
   )
 }
 
