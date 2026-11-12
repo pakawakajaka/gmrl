@@ -75,3 +75,15 @@ export function xpPerHour(character, zone) {
   if (levelsOver <= 0) return zone.xpPerHour
   return zone.xpPerHour * Math.max(0, 1 - levelsOver / GRAY_LEVELS)
 }
+
+// Classic "con" color of a zone for a character, judged against the zone's typical (middle) mob level.
+// Gray matches where XP runs out in xpPerHour.
+export function zoneDifficulty(character, zone) {
+  const level = character.characterLevel
+  if (level - zone.maxLevel >= GRAY_LEVELS) return 'gray'
+  const diff = Math.floor((zone.minLevel + zone.maxLevel) / 2) - level
+  if (diff >= 5) return 'red'
+  if (diff >= 3) return 'orange'
+  if (diff >= -2) return 'yellow'
+  return 'green'
+}

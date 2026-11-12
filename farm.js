@@ -1,6 +1,6 @@
 import { badge, el, formatDuration, formatNumber, money } from './dom.js'
 import { MAX_LEVEL } from './data.js'
-import { CONTINENTS, ZONES, xpPerHour, zoneLockReason } from './zones.js'
+import { CONTINENTS, ZONES, getZone, xpPerHour, zoneDifficulty, zoneLockReason } from './zones.js'
 
 export function renderFarm({ account, selectedId, onSelect, onSend, onRecall }) {
   const selected = account.getCharacter(selectedId) ?? account.characters[0]
@@ -33,8 +33,10 @@ export function updateFarm(root, account) {
 
 function renderFarmer(character, isSelected, onSelect, onRecall) {
   const name = character.characterName
+  const zone = getZone(character.zone)
+  const difficulty = zone ? zoneDifficulty(character, zone) : 'gray'
   const card = el('li', {
-    class: `farmer${isSelected ? ' selected' : ''}`,
+    class: `farmer difficulty-${difficulty}${isSelected ? ' selected' : ''}`,
     style: { '--class-color': character.classColor },
     'data-character-id': character.id,
   },
@@ -49,7 +51,8 @@ function renderFarmer(character, isSelected, onSelect, onRecall) {
       el('img', { class: 'class-icon', src: character.classIcon, alt: '', width: 40, height: 40 }),
       el('span', { class: 'farmer-info' },
         el('span', { class: 'farmer-level' }, `Level ${character.characterLevel} ${character.characterClass}`),
-        el('span', { class: 'farmer-zone' }, character.zone ?? 'Idle'),
+        el('span', { class: 'farmer-zone' }, character.zone ?? 'Idle',
+          zone && el('span', { class: 'visually-hidden' }, ` (${difficulty} difficulty)`)),
       ),
     ),
     el('div', { class: 'xp-bar', role: 'progressbar', 'aria-label': `${name} experience`, 'aria-valuemin': 0 },

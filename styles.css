@@ -13,6 +13,11 @@
   --tank: #8fb3e0;
   --healer: #6cc66c;
   --dps: #e5876a;
+  --con-gray: #808080;
+  --con-green: #40bf40;
+  --con-yellow: #ffff00;
+  --con-orange: #ff8040;
+  --con-red: #ff2020;
   --radius: 10px;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   line-height: 1.5;
@@ -612,19 +617,26 @@ input[type="number"] {
 
 .farmer {
   --class-color: var(--text-muted);
+  --difficulty-color: var(--con-gray);
   position: relative;
   display: grid;
   gap: 0.5rem;
   padding: 0.75rem;
   border: 1px solid var(--border);
-  border-left: 4px solid var(--class-color);
+  border-left: 4px solid var(--difficulty-color);
   border-radius: var(--radius);
   background: var(--surface);
 }
 
+/* Classic con colors for the zone being farmed; idle characters stay gray. */
+.farmer.difficulty-green { --difficulty-color: var(--con-green); }
+.farmer.difficulty-yellow { --difficulty-color: var(--con-yellow); }
+.farmer.difficulty-orange { --difficulty-color: var(--con-orange); }
+.farmer.difficulty-red { --difficulty-color: var(--con-red); }
+
 .farmer.selected {
   border-color: var(--accent);
-  border-left-color: var(--class-color);
+  border-left-color: var(--difficulty-color);
   box-shadow: inset 0 0 0 1px var(--accent);
 }
 
