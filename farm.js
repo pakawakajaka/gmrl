@@ -1,8 +1,9 @@
 import { badge, el, formatDuration, formatNumber, money } from './dom.js'
 import { MAX_LEVEL } from './data.js'
 import { CONTINENTS, ZONES, farmRates, getZone, zoneDifficulty, zoneLockReason } from './zones.js'
+import { renderSortControl, sortCharacters } from './sort.js'
 
-export function renderFarm({ account, selectedId, onSelect, onSend, onRecall }) {
+export function renderFarm({ account, selectedId, sortKey, onSelect, onSort, onSend, onRecall }) {
   const selected = account.getCharacter(selectedId) ?? account.characters[0]
   const income = account.characters.reduce((sum, c) => sum + c.copperPerHour, 0)
   const farming = account.characters.filter((c) => c.zone).length
@@ -15,8 +16,9 @@ export function renderFarm({ account, selectedId, onSelect, onSend, onRecall }) 
     ),
     selected
       ? [
+          el('div', { class: 'list-toolbar' }, renderSortControl(sortKey, onSort)),
           el('ul', { class: 'farm-characters', 'aria-label': 'Characters' },
-            account.characters.map((c) => renderFarmer(c, c === selected, onSelect, onRecall))),
+            sortCharacters(account.characters, sortKey).map((c) => renderFarmer(c, c === selected, onSelect, onRecall))),
           renderZoneTables(account, selected, onSend, onRecall),
         ]
       : el('p', { class: 'empty' }, 'No characters to send. ', el('a', { href: '#/create' }, 'Create one'), '.'),

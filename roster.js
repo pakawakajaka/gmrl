@@ -1,9 +1,10 @@
 import { badge, el, formatNumber } from './dom.js'
 import { ROLES } from './data.js'
+import { renderSortControl, sortCharacters } from './sort.js'
 
-export function renderRoster({ account, selectedGuild, onSelectGuild, onReset, onSaveToFile }) {
+export function renderRoster({ account, selectedGuild, sortKey, onSelectGuild, onSort, onReset, onSaveToFile }) {
   const guild = account.getGuild(selectedGuild)
-  const characters = sortForRaid(guild ? account.characters.filter((c) => guild.has(c.id)) : account.characters)
+  const characters = sortCharacters(guild ? account.characters.filter((c) => guild.has(c.id)) : account.characters, sortKey)
 
   return el('section', { class: 'roster', 'aria-labelledby': 'view-title' },
     el('div', { class: 'view-header' },
@@ -11,7 +12,10 @@ export function renderRoster({ account, selectedGuild, onSelectGuild, onReset, o
       el('a', { class: 'button primary', href: '#/create' }, '+ Create Character'),
     ),
     renderGuildFilter(account, guild, onSelectGuild),
-    renderRoleSummary(characters),
+    el('div', { class: 'list-toolbar' },
+      renderRoleSummary(characters),
+      renderSortControl(sortKey, onSort),
+    ),
     characters.length
       ? el('ul', { class: 'character-list' }, characters.map((c) => renderCharacterCard(c, account)))
       : el('p', { class: 'empty' }, 'No characters here yet. ', el('a', { href: '#/create' }, 'Create one'), '.'),
@@ -20,12 +24,6 @@ export function renderRoster({ account, selectedGuild, onSelectGuild, onReset, o
       el('button', { type: 'button', class: 'button subtle', onclick: onReset }, 'Reset to default data'),
     ),
   )
-}
-
-function sortForRaid(characters) {
-  return [...characters].sort((a, b) =>
-    ROLES.indexOf(a.characterRole) - ROLES.indexOf(b.characterRole) ||
-    a.characterName.localeCompare(b.characterName))
 }
 
 function renderGuildFilter(account, activeGuild, onSelectGuild) {

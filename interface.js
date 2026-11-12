@@ -5,6 +5,7 @@ import { el, formatDuration, formatMoney, money } from './dom.js'
 import { renderFarm, updateFarm } from './farm.js'
 import { getItem } from './gear.js'
 import { renderRoster } from './roster.js'
+import { DEFAULT_SORT } from './sort.js'
 import { createDefaultAccount, loadAccount, saveAccount, saveAccountToFile } from './storage.js'
 
 const APP_TITLE = 'Guild Master Raid Leader'
@@ -21,6 +22,8 @@ const loaded = loadAccount()
 let account = loaded.account
 let selectedGuild = null
 let farmSelectedId = null
+let rosterSort = DEFAULT_SORT
+let farmSort = DEFAULT_SORT
 let lastSave = Date.now()
 
 function currentView() {
@@ -43,7 +46,9 @@ function render() {
     app.replaceChildren(renderFarm({
       account,
       selectedId: farmSelectedId,
+      sortKey: farmSort,
       onSelect: handleFarmSelect,
+      onSort: (key) => { farmSort = key; render() },
       onSend: handleSend,
       onRecall: handleRecall,
     }))
@@ -51,7 +56,9 @@ function render() {
     app.replaceChildren(renderRoster({
       account,
       selectedGuild,
+      sortKey: rosterSort,
       onSelectGuild: handleSelectGuild,
+      onSort: (key) => { rosterSort = key; render() },
       onReset: handleReset,
       onSaveToFile: handleSaveToFile,
     }))
