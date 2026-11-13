@@ -3,6 +3,7 @@ import { CLASS_BITS, INVENTORY_TYPES, QUALITIES, QUEST_ITEMS, RACE_BITS, SLOTS, 
 import { SCHOOLS, STAT_NAMES, characterStats } from './stats.js'
 import { drinkFor, foodFor, getMob } from './combat.js'
 import { objectivesOf, questProgress } from './quests.js'
+import { getSpell, knownAbilities } from './spells.js'
 
 const LEFT = ['head', 'neck', 'shoulder', 'back', 'chest', 'shirt', 'tabard', 'wrist']
 const RIGHT = ['hands', 'waist', 'legs', 'feet', 'finger1', 'finger2', 'trinket1', 'trinket2']
@@ -135,6 +136,8 @@ function renderStats(character, s) {
     group('Combat', [
       ['Power Level', Math.round(character.power.solo)],
       ['Item Level', Math.floor(character.itemLevel)],
+      ['Gold', money(character.copper)],
+      ['Damage / sec', rates?.beatable ? rates.dps.toFixed(1) : '—'],
       ['Combat / Eat', rates?.beatable ? `${Math.round(rates.fightSeconds)}s / ${Math.round(rates.eatSeconds)}s` : '—'],
       ['Food', foodFor(character.characterLevel).name],
       s.mana > 0 && ['Drink', drinkFor(character.characterLevel).name],
@@ -185,7 +188,8 @@ function renderStats(character, s) {
       ['Health Regen', `${Math.floor(s.healthRegen)} per 5 sec (out of combat)`],
     ]),
     group('Resistances', SCHOOLS.map((school) => [capitalize(school), s.resist[school]])),
-    el('p', { class: 'note' }, 'Power level sets damage in fights. After each fight the character eats and drinks back what they lost; health, mana, armor and spirit regen set how long that takes. Food and drink are the best vendor kind for their level, free. Item level is the average of worn gear (empty slots count as 0). Farm rates are for grinding the current zone, before quest rewards. Stats are without talents or buffs.'),
+    group('Trained Spells', Object.entries(knownAbilities(character)).map(([name, id]) => [name, `Rank ${getSpell(id).rank ?? 1}`])),
+    el('p', { class: 'note' }, 'Fights are simulated swing by swing and cast by cast, with the best rotation of the spells the character has trained and the gear it wears. After each fight the character eats and drinks back what they lost; health, mana, armor and spirit regen set how long that takes. Food and drink are the best vendor kind for their level, free. Each character keeps its own gold and buys new spell ranks as soon as it can afford them. Item level is the average of worn gear (empty slots count as 0). Farm rates are for grinding the current zone, before quest rewards. Stats are without talents or buffs.'),
   )
 }
 
@@ -217,7 +221,7 @@ function renderQuestLog(character) {
       objectives.length
         ? el('ul', { class: 'quest-objectives' }, objectives.map((o, i) =>
           el('li', { class: counts[i] >= o.count ? 'done' : null }, `${objectiveName(o)}: ${counts[i]}/${o.count}`)))
-        : el('span', { class: 'quest-objectives' }, ' (errand)'),
+        : el('span', { class: 'quest-objectives' }, quest.steps ? ` (errand, ${quest.steps} pickups)` : ' (errand)'),
     )
   }))
 }

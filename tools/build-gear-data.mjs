@@ -318,6 +318,7 @@ function refValue(refId) {
 const NORMAL_RESPAWN = 300
 const UNATTACKABLE = 0x2 | 0x100 | 0x2000000 // non-attackable, immune to players, not selectable
 const CRITTER = 8
+const DEFAULT_RUN = 1.14286 // creature run speed multiplier of 7 yards per second
 const lootIds = {}
 const mobs = {}
 const zoneMobs = Object.fromEntries(ZONES.map((z) => [z.name, new Map()]))
@@ -333,6 +334,13 @@ function buildMob(c) {
     dps: round(hit / attack),
     armor: c.Armor,
   }
+  if (attack !== 2) mob.speed = attack
+  if (c.SpeedRun && Math.abs(c.SpeedRun - DEFAULT_RUN) > 0.001) mob.run = round(c.SpeedRun)
+  const resist = {}
+  for (const school of ['Holy', 'Fire', 'Nature', 'Frost', 'Shadow', 'Arcane']) {
+    if (c[`Resistance${school}`] > 0) resist[school.toLowerCase()] = c[`Resistance${school}`]
+  }
+  if (Object.keys(resist).length) mob.resist = resist
   const coin = (c.MinLootGold + c.MaxLootGold) / 2
   const value = c.LootId ? lootValue(creatureLoot.get(c.LootId) ?? []) : 0
   if (coin) mob.coin = Math.round(coin)
@@ -425,7 +433,7 @@ function killObjectives(row, zone) {
   for (let k = 1; k <= 4; k++) {
     const id = row[`ReqCreatureOrGOId${k}`]
     const count = row[`ReqCreatureOrGOCount${k}`]
-    if (id <= 0 || count <= 0) continue // game objects and spell casts are part of the errand time
+    if (id <= 0 || count <= 0 || row[`ReqSpellCast${k}`]) continue // game objects and spell casts are errand steps
     const sources = (creditSources.get(id) ?? []).filter((entry) => zoneMobs[zone].has(entry))
     if (!sources.length) return null
     out.push(sources.length === 1 && sources[0] === id ? [id, count] : [id, count, sources])
@@ -434,8 +442,8 @@ function killObjectives(row, zone) {
 }
 
 // Item objectives that drop from mobs: [itemId, count, [[mobEntry, chance%], ...]]. Items that don't drop from
-// any creature (picked up from objects, given by NPCs) are part of the errand time. Returns null if the item
-// only drops from creatures that can't be soloed in the zone.
+// any creature (picked up from objects, given by NPCs) are errand steps. Returns null if the item only drops
+// from creatures that can't be soloed in the zone.
 const questItems = {}
 function itemObjectives(row, zone) {
   const out = []
@@ -456,6 +464,26 @@ function itemObjectives(row, zone) {
     questItems[id] = itemRows.get(id)?.name ?? `Item ${id}`
   }
   return out
+}
+
+// Objective steps that aren't mob kills or mob drops, each costing a little travel and a click: game objects to
+// use, spells to cast on something, and items looted from objects in the world (crates, plants, chests). Items
+// that come from neither mobs nor objects (handed over by NPCs, crafted, bought, quest rewards) cost nothing extra.
+// Item -> most of it one object gives (average of its loot count range).
+const objectYield = new Map()
+for (const r of sqlRows(sql, 'gameobject_loot_template')) {
+  if (r.mincountOrRef <= 0) continue
+  objectYield.set(r.item, Math.max(objectYield.get(r.item) ?? 0, (r.mincountOrRef + Math.max(r.mincountOrRef, r.maxcount)) / 2))
+}
+function errandSteps(row) {
+  let steps = 0
+  for (let k = 1; k <= 4; k++) {
+    const target = row[`ReqCreatureOrGOId${k}`]
+    if (target && (target < 0 || row[`ReqSpellCast${k}`])) steps += row[`ReqCreatureOrGOCount${k}`]
+    const item = row[`ReqItemId${k}`]
+    if (item && !itemLootIds.has(item) && objectYield.has(item)) steps += Math.ceil(row[`ReqItemCount${k}`] / objectYield.get(item))
+  }
+  return steps
 }
 
 const quests = {}
@@ -487,6 +515,8 @@ for (const row of questRows) {
   if (money) quest.money = money
   if (kills.length) quest.kills = kills
   if (items.length) quest.items = items
+  const steps = errandSteps(row)
+  if (steps) quest.steps = steps
   if (choice.length) quest.choice = choice
   if (reward.length) quest.reward = reward
   quests[row.entry] = quest
@@ -514,6 +544,166 @@ for (const r of classLevelStats) {
   baseHealthMana[cls] ??= []
   baseHealthMana[cls][r.level - 1] = [r.basehp, r.basemana]
 }
+
+// ---- Class spells ----
+// The trainer abilities each class fights with, every rank with its trainer level and cost, plus the spells
+// they trigger. Effect values follow CMaNGOS SpellEntry::CalculateSimpleValue and Unit::CalculateSpellDamage.
+const ROTATION_SPELLS = {
+  Warrior: ['Heroic Strike', 'Battle Shout', 'Rend', 'Charge', 'Overpower', 'Bloodrage', 'Execute'],
+  Rogue: ['Sinister Strike', 'Eviscerate', 'Slice and Dice'],
+  Hunter: ['Auto Shot', 'Raptor Strike', "Hunter's Mark", 'Serpent Sting', 'Arcane Shot', 'Aspect of the Hawk'],
+  Mage: ['Fireball', 'Frostbolt', 'Fire Blast', 'Arcane Missiles', 'Arcane Intellect', 'Frost Armor', 'Ice Armor'],
+  Priest: ['Smite', 'Lesser Heal', 'Shadow Word: Pain', 'Power Word: Shield', 'Power Word: Fortitude', 'Mind Blast', 'Inner Fire', 'Renew', 'Heal', 'Greater Heal'],
+  Warlock: ['Shadow Bolt', 'Immolate', 'Corruption', 'Curse of Agony', 'Life Tap', 'Drain Life', 'Demon Skin', 'Demon Armor'],
+  Paladin: ['Seal of Righteousness', 'Holy Light', 'Devotion Aura', 'Blessing of Might', 'Judgement'],
+  Shaman: ['Lightning Bolt', 'Healing Wave', 'Earth Shock', 'Lightning Shield', 'Flame Shock'],
+  Druid: ['Wrath', 'Healing Touch', 'Mark of the Wild', 'Moonfire', 'Rejuvenation', 'Thorns', 'Cat Form', 'Claw', 'Rake', 'Rip', 'Ferocious Bite'],
+}
+// SpellCastTimes.dbc and SpellDuration.dbc entries the rotation spells use (ms; -1 = until cancelled).
+const CAST_MS = { 1: 0, 4: 1000, 5: 2000, 6: 5000, 7: 10000, 14: 3000, 16: 1500, 18: 0, 19: 2500, 20: 2500, 21: 2600, 22: 3500, 23: 1800, 24: 2200, 90: 1700, 91: 2800, 171: 6000 }
+const DURATION_MS = {
+  0: 0, 1: 10000, 3: 60000, 4: 120000, 5: 300000, 6: 600000, 8: 15000, 9: 30000, 18: 20000, 21: -1, 22: 45000, 27: 3000, 28: 5000, 29: 12000,
+  30: 1800000, 31: 8000, 32: 6000, 35: 4000, 36: 1000, 39: 2000, 64: 40000, 85: 18000, 86: 21000, 105: 9000, 106: 24000, 125: 35000,
+  165: 7000, 245: 50000, 265: 55000,
+}
+// Durations that grow with combo points: [1 point, 5 points].
+const COMBO_DURATION_MS = { 185: [9000, 21000], 553: [8000, 16000] }
+// Spells CMaNGOS triggers from scripts rather than spell data.
+const LIGHTNING_SHIELD_PROC = { 324: 26364, 325: 26365, 905: 26366, 945: 26367, 8134: 26369, 10431: 26370, 10432: 26363 }
+const RIGHTEOUSNESS_PROC = { 20154: 25742, 21084: 25741, 20287: 25740, 20288: 25739, 20289: 25738, 20290: 25737, 20291: 25736, 20292: 25735, 20293: 25713 }
+const HOLY_LIGHT_HEAL = 19968
+const POWER = { 0: 'mana', 1: 'rage', 3: 'energy', 4294967294: 'health' }
+
+const trainers = sqlRows(sql, 'npc_trainer_template')
+const trainerSpells = groupBy([...trainers, ...sqlRows(sql, 'npc_trainer')], 'entry')
+const createSpells = sqlRows(sql, 'playercreateinfo_spell')
+
+const spellData = {}
+function buildSpell(id) {
+  if (id in spellData) return
+  const s = spells.get(id)
+  if (!s) throw new Error(`No spell ${id}`)
+  if (!(s.CastingTimeIndex in CAST_MS)) throw new Error(`Unknown cast time index ${s.CastingTimeIndex} (${s.SpellName})`)
+  if (!(s.DurationIndex in DURATION_MS) && !(s.DurationIndex in COMBO_DURATION_MS)) {
+    throw new Error(`Unknown duration index ${s.DurationIndex} (${s.SpellName})`)
+  }
+  const spell = { name: s.SpellName, school: s.School }
+  spellData[id] = spell
+  const rank = Number(/Rank (\d+)/.exec(s.Rank1)?.[1])
+  if (rank) spell.rank = rank
+  if (s.SpellLevel) spell.spellLevel = s.SpellLevel
+  if (s.BaseLevel) spell.baseLevel = s.BaseLevel
+  if (s.MaxLevel) spell.maxLevel = s.MaxLevel
+  const power = POWER[s.PowerType]
+  if (power && power !== 'mana') spell.power = power
+  if (s.ManaCost) spell.cost = power === 'rage' ? s.ManaCost / 10 : s.ManaCost
+  if (s.ManaCostPercentage) spell.costPct = s.ManaCostPercentage
+  if (CAST_MS[s.CastingTimeIndex]) spell.cast = CAST_MS[s.CastingTimeIndex]
+  const cooldown = Math.max(s.RecoveryTime, s.CategoryRecoveryTime)
+  if (cooldown) spell.cooldown = cooldown
+  if (s.CategoryRecoveryTime && s.Category) spell.category = s.Category
+  if (s.StartRecoveryTime) spell.gcd = s.StartRecoveryTime
+  if (s.DurationIndex in COMBO_DURATION_MS) spell.comboDuration = COMBO_DURATION_MS[s.DurationIndex]
+  else if (DURATION_MS[s.DurationIndex]) spell.duration = DURATION_MS[s.DurationIndex]
+  if (s.DmgClass) spell.dmgClass = s.DmgClass // 1 magic, 2 melee, 3 ranged
+  if (s.RangeIndex === 2) spell.melee = true
+  if (s.Attributes & 0x4) spell.nextSwing = true
+  if (s.AttributesEx & (0x4 | 0x40)) spell.channel = true
+  if (s.InterruptFlags & 0x2) spell.pushback = true
+  if (s.CasterAuraState) spell.casterState = s.CasterAuraState
+  if (s.TargetAuraState) spell.targetState = s.TargetAuraState
+  if (s.ProcCharges) spell.charges = s.ProcCharges
+  const effects = []
+  for (let k = 1; k <= 3; k++) {
+    if (!s[`Effect${k}`]) continue
+    const e = { type: s[`Effect${k}`] }
+    const set = (key, value) => {
+      if (value && value !== -1) e[key] = value
+    }
+    set('aura', s[`EffectApplyAuraName${k}`])
+    e.base = s[`EffectBasePoints${k}`]
+    set('dice', s[`EffectBaseDice${k}`])
+    set('sides', s[`EffectDieSides${k}`])
+    set('perLevel', s[`EffectRealPointsPerLevel${k}`])
+    set('dicePerLevel', s[`EffectDicePerLevel${k}`])
+    set('perCombo', s[`EffectPointsPerComboPoint${k}`])
+    set('period', s[`EffectAmplitude${k}`])
+    set('misc', s[`EffectMiscValue${k}`])
+    set('trigger', s[`EffectTriggerSpell${k}`])
+    set('mechanic', s[`EffectMechanic${k}`])
+    set('coef', s[`EffectBonusCoefficient${k}`])
+    set('apCoef', s[`EffectBonusCoefficientFromAP${k}`])
+    if (s[`DmgMultiplier${k}`] !== 1) set('mult', round(s[`DmgMultiplier${k}`]))
+    effects.push(e)
+  }
+  spell.effects = effects
+  for (const e of effects) if (e.trigger) buildSpell(e.trigger)
+  const proc = LIGHTNING_SHIELD_PROC[id] ?? RIGHTEOUSNESS_PROC[id] ?? (s.SpellIconID === 70 && s.SpellFamilyName === 10 && id !== HOLY_LIGHT_HEAL ? HOLY_LIGHT_HEAL : 0)
+  if (proc) {
+    spell.proc = proc
+    buildSpell(proc)
+  }
+}
+
+const classSpells = {}
+const startingSpells = {}
+for (const [cls, names] of Object.entries(ROTATION_SPELLS)) {
+  const classId = Number(Object.keys(CLASS_NAMES).find((k) => CLASS_NAMES[k] === cls))
+  const ranks = new Map() // learned spell id -> { level, cost }
+  for (const c of creatures.values()) {
+    if (c.TrainerType !== 0 || c.TrainerClass !== classId) continue
+    for (const row of [...(trainerSpells.get(c.TrainerTemplateId) ?? []), ...(trainerSpells.get(c.Entry) ?? [])]) {
+      const teach = spells.get(row.spell)
+      const learned = [1, 2, 3].map((k) => teach?.[`Effect${k}`] === 36 && teach[`EffectTriggerSpell${k}`]).find(Boolean) || row.spell
+      const prev = ranks.get(learned)
+      if (!prev || prev.cost > row.spellcost) ranks.set(learned, { level: row.reqlevel, cost: row.spellcost })
+    }
+  }
+  const starting = [...new Set(createSpells.filter((r) => r.class === classId).map((r) => r.Spell))]
+  for (const id of starting) ranks.set(id, { level: 1, cost: 0 })
+  classSpells[cls] = {}
+  for (const name of names) {
+    const list = [...ranks].filter(([id]) => spells.get(id)?.SpellName === name)
+    if (!list.length) throw new Error(`${cls} can't learn ${name}`)
+    list.sort(([a, x], [b, y]) => x.level - y.level || a - b)
+    classSpells[cls][name] = list.map(([id, { level, cost }]) => {
+      buildSpell(id)
+      return cost ? [id, level, cost] : [id, level]
+    })
+  }
+  startingSpells[cls] = starting.filter((id) => id in spellData)
+}
+// Judgement of Righteousness ranks, in Seal of Righteousness rank order (Judgement casts the seal's).
+const judgements = [...spells.values()].filter((s) => s.SpellName === 'Judgement of Righteousness')
+  .sort((a, b) => a.SpellLevel - b.SpellLevel || a.Id - b.Id)
+classSpells.Paladin['Seal of Righteousness'].forEach(([sealId], i) => {
+  spellData[sealId].judgement = judgements[i].Id
+  buildSpell(judgements[i].Id)
+})
+
+// ---- Pets ----
+// Per level 1-60: hunter pet (CMaNGOS pet_levelstats entry 1), Imp and Voidwalker. Warlock pet melee damage
+// comes from creature_template_classlevelstats like Pet::InitStatsForLevel.
+const petLevels = groupBy(sqlRows(sql, 'pet_levelstats'), 'creature_entry')
+const creatureClassStats = sqlRows(sql, 'creature_template_classlevelstats')
+function buildPet(entry, template) {
+  const levels = [...petLevels.get(entry)].sort((a, b) => a.level - b.level).slice(0, 60)
+  return levels.map((r) => {
+    const row = [r.hp, r.mana, r.armor, r.str, r.agi, r.sta, r.inte, r.spi]
+    if (template) {
+      const cls = creatureClassStats.find((c) => c.Level === r.level && c.Class === template.UnitClass)
+      const attack = template.MeleeBaseAttackTime / 1000
+      row.push(round((cls.BaseDamageExp0 * template.DamageVariance + (cls.BaseMeleeAttackPower / 14) * attack) * template.DamageMultiplier))
+    }
+    return row
+  })
+}
+const pets = {
+  Hunter: { speed: 2, levels: buildPet(1) },
+  Imp: { speed: creatures.get(416).MeleeBaseAttackTime / 1000, levels: buildPet(416, creatures.get(416)), spell: 3110 },
+  Voidwalker: { speed: creatures.get(1860).MeleeBaseAttackTime / 1000, levels: buildPet(1860, creatures.get(1860)) },
+}
+buildSpell(3110)
 
 // ---- Output ----
 const items = {}
@@ -548,12 +738,16 @@ export const ZONE_QUESTS = ${json(zoneQuests)}
 export const QUEST_ITEMS = ${json(questItems)}
 export const BASE_STATS = ${json(baseStats)}
 export const BASE_HEALTH_MANA = ${json(baseHealthMana)}
+export const SPELLS = ${json(spellData)}
+export const CLASS_SPELLS = ${json(classSpells)}
+export const STARTING_SPELLS = ${json(startingSpells)}
+export const PETS = ${json(pets)}
 `
 fs.writeFileSync(OUT, out)
 console.log(
   `items ${Object.keys(items).length} (${Object.values(items).filter((i) => i.suffixes).length} random-suffix), suffixes ${Object.keys(suffixData).length},`,
   `loot tables ${Object.keys(loot).length}, refs ${Object.keys(refs).length},`,
-  `mobs ${Object.keys(mobs).length}, quests ${Object.keys(quests).length}, size ${(out.length / 1024).toFixed(0)} KB`,
+  `mobs ${Object.keys(mobs).length}, quests ${Object.keys(quests).length}, spells ${Object.keys(spellData).length}, size ${(out.length / 1024).toFixed(0)} KB`,
 )
 for (const zone of ZONES) {
   const ids = zoneQuests[zone.name]

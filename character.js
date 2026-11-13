@@ -4,6 +4,7 @@ import { averageItemLevel, characterPower } from './power.js'
 import { SLOTS, bestLoadout, getItem, getQuest, itemKey, levelToUse, questRewardsFor, rollMobLoot } from './gear.js'
 import { farmRates, questXp } from './combat.js'
 import { activeQuests, creditKill, nextAction, objectivesOf } from './quests.js'
+import { isClassSpell, startingSpells, trainSpells } from './spells.js'
 
 const lookup = (table, key) => (Object.hasOwn(table, key) ? table[key] : undefined)
 const BAG_SIZE = 16
@@ -12,7 +13,7 @@ const LOG_SIZE = 20
 export default class Character {
   #planned = null // the next action in the current zone, kept until there's time to do it
 
-  constructor({ id = crypto.randomUUID(), characterName, characterClass, characterSpec, characterRace, characterRole, characterLevel = MIN_LEVEL, characterXp = 0, zone = null, equipment = {}, bag = [], questsDone = [], questLog = {}, timeBank = 0, lootLog = [] }) {
+  constructor({ id = crypto.randomUUID(), characterName, characterClass, characterSpec, characterRace, characterRole, characterLevel = MIN_LEVEL, characterXp = 0, zone = null, copper = 0, spells, equipment = {}, bag = [], questsDone = [], questLog = {}, timeBank = 0, lootLog = [] }) {
     this.id = id
     this.characterName = Character.formatName(characterName)
     this.characterClass = characterClass
@@ -22,6 +23,8 @@ export default class Character {
     this.characterLevel = Number(characterLevel)
     this.characterXp = characterXp // progress toward the next level
     this.zone = zone // name of the zone being farmed, or null when idle
+    this.copper = copper // the character's own money
+    this.spells = spells ?? startingSpells(characterClass) // known class spell ids, every rank
     this.equipment = equipment // { slot: itemId }
     this.bag = bag // item ids kept until the character is high enough level to wear them
     this.questsDone = questsDone // quest ids
@@ -77,7 +80,8 @@ export default class Character {
 
   // Farms for `hours`: one fight or quest turn-in after another, each taking its own time. Leftover time
   // carries over to the next call. Kills and quests pay XP, money and gear at the character's level when
-  // they happen. Returns the copper earned, levels gained and newly equipped item ids.
+  // they happen; the money buys new spell ranks as soon as they're affordable. Returns the copper earned,
+  // levels gained and newly equipped item ids.
   farm(hours, now = Date.now()) {
     const zone = getZone(this.zone)
     if (!zone || hours <= 0) return { copper: 0, levels: 0, upgrades: [] }
@@ -120,6 +124,8 @@ export default class Character {
       levels += gained
       if (found.length || gained) this.equipBest(found.map((a) => a.item))
       acquired.push(...found)
+      this.copper += action.fight ? action.fight.copper : (getQuest(action.questId).money ?? 0)
+      trainSpells(this)
     }
     const upgrades = [...new Set(Object.values(this.equipment))].filter((id) => !wornBefore.has(id))
     this.#log(acquired, upgrades, now)
@@ -161,11 +167,14 @@ export default class Character {
     this.lootLog = [...entries.reverse(), ...this.lootLog].slice(0, LOG_SIZE)
   }
 
-  // Restores gear fields from untrusted saved data, dropping anything that doesn't exist.
+  // Restores gear, money and spell fields from untrusted saved data, dropping anything that doesn't exist.
   restoreGear(data) {
     const ids = (list) => (Array.isArray(list) ? list.map(itemKey).filter((key) => key !== undefined) : [])
     const fraction = (value, max) => (Number.isFinite(Number(value)) ? Math.min(Math.max(Number(value), 0), max) : 0)
     const equipped = data.equipment && typeof data.equipment === 'object' ? Object.values(data.equipment) : []
+    this.copper = Math.floor(fraction(data.copper, Number.MAX_SAFE_INTEGER))
+    const spells = Array.isArray(data.spells) ? data.spells.map(Number).filter((id) => isClassSpell(this.characterClass, id)) : []
+    this.spells = [...new Set([...startingSpells(this.characterClass), ...spells])]
     this.questsDone = [...new Set(Array.isArray(data.questsDone) ? data.questsDone.map(Number).filter((id) => getQuest(id)) : [])]
     const done = new Set(this.questsDone)
     this.questLog = {}

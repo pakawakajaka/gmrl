@@ -77,8 +77,9 @@ export function equippedItems(character) {
     .filter(([, item]) => item)
 }
 
-// All sheet values for the character. Percentages are in percent (e.g. 5.2 = 5.2%).
-export function characterStats(character) {
+// All sheet values for the character. Percentages are in percent (e.g. 5.2 = 5.2%). `buffs` adds flat amounts
+// from the character's own buffs: str, agi, sta, int, spi, armor, attackPower, rangedAttackPower.
+export function characterStats(character, buffs = {}) {
   const { characterClass: cls, characterRace: race, characterLevel: level } = character
   const racial = RACIALS[race] ?? {}
   const worn = Object.fromEntries(equippedItems(character))
@@ -92,7 +93,7 @@ export function characterStats(character) {
     for (const [school, value] of Object.entries(item.resist ?? {})) if (school in resist) resist[school] += value
     for (const [key, value] of Object.entries(item.bonus ?? {})) bonus[key] = (bonus[key] ?? 0) + value
   }
-  for (const key of ['str', 'agi', 'sta', 'int', 'spi', 'health', 'armor']) gear[key] += bonus[key] ?? 0
+  for (const key of ['str', 'agi', 'sta', 'int', 'spi', 'health', 'armor']) gear[key] += (bonus[key] ?? 0) + (buffs[key] ?? 0)
   for (const school of SCHOOLS) resist[school] += bonus[`${school}Resistance`] ?? 0
 
   const base = BASE_STATS[race][cls][level - 1]
@@ -112,15 +113,15 @@ export function characterStats(character) {
     const skill = item?.class === 2 ? WEAPON_SKILL[item.subclass] : undefined
     return skill ? (bonus[`skill${skill}`] ?? 0) + (racial.skills?.[skill] ?? 0) : 0
   }
-  const attackPower = Math.max(0, Math.trunc(meleeAttackPower(cls, level, str, agi))) + (bonus.attackPower ?? 0)
-  const rangedPower = Math.max(0, Math.trunc(rangedAttackPower(cls, level, agi))) + (bonus.rangedAttackPower ?? 0)
+  const attackPower = Math.max(0, Math.trunc(meleeAttackPower(cls, level, str, agi))) + (bonus.attackPower ?? 0) + (buffs.attackPower ?? 0)
+  const rangedPower = Math.max(0, Math.trunc(rangedAttackPower(cls, level, agi))) + (bonus.rangedAttackPower ?? 0) + (buffs.rangedAttackPower ?? 0)
   const agiCrit = agi / perLevel(CRIT_PER_AGI[cls], level)
 
   const weaponDamage = (item, power, scale = 1) => {
     const speed = item?.speed ?? BASE_ATTACK_TIME
     const [min, max] = item?.damage?.[0] ?? UNARMED_DAMAGE
     const fromPower = (power / 14) * speed
-    return { min: (min + fromPower) * scale, max: (max + fromPower) * scale, speed }
+    return { min: (min + fromPower) * scale, max: (max + fromPower) * scale, speed, base: [min, max], school: item?.damage?.[0]?.[2] ?? 0, subclass: item?.subclass }
   }
   const mainHand = worn.mainHand
   const offHand = worn.offHand?.class === 2 ? worn.offHand : undefined
@@ -129,6 +130,9 @@ export function characterStats(character) {
     offHand: offHand && weaponDamage(offHand, attackPower, 0.5),
     attackPower,
     crit: agiCrit + (bonus.crit ?? 0) + skillBonus(mainHand) * 0.04,
+    baseCrit: agiCrit + (bonus.crit ?? 0),
+    skill: level * 5 + skillBonus(mainHand),
+    twoHand: mainHand?.slot === 17,
     hit: bonus.hit ?? 0,
   }
   melee.dps = [melee.mainHand, melee.offHand].filter(Boolean).reduce((sum, d) => sum + (d.min + d.max) / 2 / d.speed, 0)
@@ -143,6 +147,8 @@ export function characterStats(character) {
       dps: (damage.min + damage.max) / 2 / damage.speed,
       attackPower: rangedPower,
       crit: agiCrit + (bonus.crit ?? 0) + skillBonus(rangedItem) * 0.04,
+      baseCrit: agiCrit + (bonus.crit ?? 0),
+      skill: level * 5 + skillBonus(rangedItem),
       isWand,
     }
   }
@@ -171,5 +177,5 @@ export function characterStats(character) {
     mp5: bonus.mp5 ?? 0,
   }
 
-  return { stats, health, mana, melee, ranged, defenses, spell, resist, hp5: bonus.hp5 ?? 0, healthRegen: healthRegenPerSecond(cls, spi) * 5 }
+  return { stats, baseHealth, baseMana, health, mana, melee, ranged, defenses, spell, resist, hp5: bonus.hp5 ?? 0, healthRegen: healthRegenPerSecond(cls, spi) * 5 }
 }

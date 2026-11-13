@@ -15,7 +15,7 @@ Characters farming a zone fight its real Classic mobs (see Mobs and quests) and 
 
 ## Power
 
-Gear and farming connect through power (`power.js`). Players see two numbers:
+Gear is summed up in two numbers (`power.js`). They're for display; fights are simulated from the actual stats (see Fights below).
 
 - **Item level**: the average item level of worn gear (every slot except shirt and tabard, empty slots as 0, a two-hander for both hands). It's display only, a quick read on how good the gear is.
 - **Power level** (`solo` in the code) = (level power × level share + gear power) × class and role factors.
@@ -25,14 +25,15 @@ Gear and farming connect through power (`power.js`). Players see two numbers:
 
 **Party power** uses the same level and gear but rewards tanks and healers (1.5×) instead. It isn't shown yet; it's for future dungeon and raid grouping.
 
-Balance constants are at the top of `power.js` and `combat.js`.
+Balance constants are at the top of `combat.js`. Power level is shown for comparison only; fights don't use it.
 
 ## Mobs and quests
 
-Each zone has the mobs that spawn there in Classic (`combat.js`), with their level range, health, damage, armor, coin and loot table. Elites (other than rare spawns), bosses, critters, NPCs and event mobs are left out, as are border spawns well outside the zone's level range.
+Each zone has the mobs that spawn there in Classic (`combat.js`), with their level range, health, damage, armor, run speed, resistances, coin and loot table. Elites (other than rare spawns), bosses, critters, NPCs and event mobs are left out, as are border spawns well outside the zone's level range.
 
-- **Fights**: damage per second comes from power level, so a fight lasts mob health ÷ DPS. The mob hits back for its own DPS, reduced by the character's armor (Classic armor formula) and by class (pets, ranged and kiting take less). Casters also spend mana while fighting. After each fight the character eats and drinks back what they lost, using the best Classic vendor food and water for their level (free, nothing to buy) on top of their spirit regen (Classic per-class formulas, ×1.5 while sitting) and any health or mana per 5 sec; regen while finding the next mob counts too. A mob that would deal more than the character's health is too strong and skipped.
-- **Quests** (`quests.js`): characters keep up to 5 of the zone's available quests (level, faction, race, class and quest chains respected). They turn in finished quests first, then hunt the mob that finishes the next objective fastest (kill counts, or item drops at their real drop chance), then grind. Kills count for every quest that needs them. Quests that only need talking or delivering finish in 5 minutes. Turning in pays Classic quest XP, money and gear.
+- **Fights** (`sim.js`) are simulated event by event with CMaNGOS formulas: weapon swings, hit tables (miss, dodge, parry, glancing, block, crit, crushing), armor, spell hit, crit and partial resists, spell power coefficients and low-level penalties, cast times, GCD, cooldowns, DoT ticks, pushback, rage, energy, combo points, mana and the five-second rule. The mob runs in from pull range (slowed by Frostbolt and the like) unless pulled in melee. Each class tries a few rotations with its best trained ranks (e.g. Heroic Strike thresholds, Slice and Dice or not, which filler spell, wand or not, dots or not, cat form or caster) and keeps whichever gets through the fight, rest and next pull fastest. Self-buffs (armors, auras, blessings, shouts, shields) are kept up and their mana counted; hunter and warlock pets fight and tank, and heal up after. After each fight the character eats and drinks back what they lost, using the best Classic vendor food and water for their level (free) on top of their spirit regen (×1.5 while sitting) and any health or mana per 5 sec; warlocks Life Tap spare health first. A mob the character can't kill in any rotation is too strong and skipped. Not modeled yet: talents, kiting, procs from gear, ammo.
+- **Gold and spells**: each character keeps its own gold. Every class starts with its level-1 spells and buys new ranks from its trainer (Classic costs) as soon as it can afford them, most important abilities first. The header shows the account's total.
+- **Quests** (`quests.js`): characters keep up to 5 of the zone's available quests (level, faction, race, class and quest chains respected). They turn in finished quests first, then hunt the mob that finishes the next objective fastest (kill counts, or item drops at their real drop chance), then grind. Kills count for every quest that needs them. Quests that only need talking or delivering finish in 5 minutes; each object to use, item to loot from an object in the world or spell to cast on something adds 30 seconds. Turning in pays Classic quest XP, money and gear.
 - **Grinding**: random mobs from green to orange con, weighted by how many spawn. If the zone has too few, the nearest common mobs instead.
 - **XP** follows Classic: more for higher-level mobs, falling off below the character's level and none once they're gray; quest XP drops once the character is 6 levels over the quest. Both are doubled (`XP_RATE`), so 1 to 60 takes about 75 to 125 hours depending on class. Gold isn't reduced by outleveling, so outleveled zones still pay.
 

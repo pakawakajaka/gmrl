@@ -1,27 +1,23 @@
 // Fights against real mobs: how long a kill takes, how much health and mana it costs (and the eating and
-// drinking after), and what it's worth. Solo power sets the character's damage per second; health, mana,
-// armor and regen come from its stats.
+// drinking after), and what it's worth. Each fight is simulated with the character's trained spells, gear
+// and best rotation (see sim.js).
 import { MAX_LEVEL } from './data.js'
 import { MOBS, ZONE_MOBS } from './gear-data.js'
 import { characterPower } from './power.js'
-import { characterStats } from './stats.js'
+import { MAX_FIGHT_SECONDS, buildKit, foeFor, manaCost, simulate, variantsFor } from './sim.js'
 import { grayLevel, zeroDifference } from './zones.js'
 
 export const getMob = (entry) => (Object.hasOwn(MOBS, entry) ? MOBS[entry] : undefined)
 
-// Damage per second per point of solo power. BASE_POWER is what anyone does just by swinging, which keeps
-// level 1 fights from dragging on (mob health doesn't start from zero the way power does).
-const DPS_PER_POWER = 0.07
-const BASE_POWER = 15
 // Finding, pulling and looting the next mob. Health and mana regen during it.
 const OVERHEAD_SECONDS = 12
 // Classic's five-second rule: no spirit mana regen until 5 seconds after the last cast.
 const FIVE_SECOND_RULE = 5
 // Sitting to eat raises spirit health regen by half.
 const SITTING_REGEN = 1.5
-// Seconds of fighting a full mana bar lasts. Pure casters burn it fastest; hunters and paladins mostly
-// fight with weapons. Warriors and rogues have no mana.
-const MANA_BAR_SECONDS = { Mage: 45, Priest: 45, Druid: 60, Shaman: 75, Warlock: 90, Paladin: 120, Hunter: 150 }
+// Pets out of combat heal 13% of their health every 2 seconds; a dead one is resummoned or revived.
+const PET_REGEN_PER_SECOND = 0.065
+const PET_REVIVE_SECONDS = 10
 
 // Vendor food and water, free at every level: the best a character's level can use.
 const FOOD = [
@@ -43,12 +39,6 @@ const DRINK = [
 const bestFor = (list, level) => list.findLast((f) => f.level <= level)
 export const foodFor = (level) => bestFor(FOOD, level)
 export const drinkFor = (level) => bestFor(DRINK, level)
-// Share of a mob's damage each class actually takes: pets tank for hunters and warlocks, mages kite and
-// root, healers and hybrids patch themselves up mid-fight. Warriors take it all.
-const CLASS_DAMAGE_TAKEN = {
-  Hunter: 0.3, Warlock: 0.35, Mage: 0.45, Priest: 0.5, Druid: 0.6, Shaman: 0.8, Paladin: 0.8, Rogue: 0.9, Warrior: 1,
-}
-const MAX_ARMOR_REDUCTION = 0.75
 
 const clamp = (n, lo, hi) => Math.min(Math.max(n, lo), hi)
 
@@ -84,37 +74,79 @@ export function questXp(level, quest) {
   return Math.round(quest.xp * (over <= 0 ? 1 : (QUEST_XP_FALLOFF[over] ?? 0.1)) * XP_RATE)
 }
 
-// Per-character fight numbers, rebuilt when level or gear changes.
+// Per-character fight numbers, rebuilt when level, gear or trained spells change.
 const contexts = new WeakMap()
 function combatOf(character) {
-  const key = `${character.characterLevel}|${Object.values(character.equipment).join()}`
+  const key = `${character.characterLevel}|${Object.values(character.equipment).join()}|${character.spells.length}`
   let ctx = contexts.get(character)
   if (ctx?.key === key) return ctx
-  const power = characterPower(character)
-  const stats = characterStats(character)
+  const kit = buildKit(character)
+  const { stats } = kit
   const level = character.characterLevel
   const food = foodFor(level)
   const drink = drinkFor(level)
   // Per second: standing regen, and while sitting to eat or drink.
-  const healthRegen = (stats.healthRegen + stats.hp5) / 5
+  const healthRegen = (stats.healthRegen + stats.hp5) / 5 + kit.regen
   const manaRegen = stats.spell.regen / 5
   const mp5 = stats.spell.mp5 / 5
+  // Mana per second that long self-buffs cost to keep up; charge-based ones are paid per charge used.
+  const timed = kit.upkeep.filter((s) => s.power !== 'rage' && !s.charges && s.duration > 0)
+  const charged = Object.fromEntries(kit.upkeep.filter((s) => s.charges).map((s) => [s.name, manaCost(kit, s) / s.charges]))
+  if (kit.lightningShield) charged['Lightning Shield'] = manaCost(kit, kit.lightningShield.spell) / kit.lightningShield.spell.charges
   ctx = {
     key,
-    power,
-    dps: DPS_PER_POWER * (power.solo + BASE_POWER),
+    kit,
+    power: characterPower(character),
     health: stats.health,
-    mana: stats.mana,
-    armor: stats.defenses.armor,
-    damageTaken: CLASS_DAMAGE_TAKEN[character.characterClass] ?? 1,
-    manaPerSecond: stats.mana > 0 ? stats.mana / (MANA_BAR_SECONDS[character.characterClass] ?? Infinity) : 0,
-    healthBack: { standing: healthRegen, eating: (stats.healthRegen * SITTING_REGEN + stats.hp5) / 5 + food.health / food.seconds },
+    lifeTap: !!kit.abilities['Life Tap'],
+    upkeepPerSecond: timed.reduce((sum, s) => sum + manaCost(kit, s) / (s.duration / 1000), 0),
+    perCharge: { lightningShield: charged['Lightning Shield'] ?? 0, innerFire: charged['Inner Fire'] ?? 0 },
+    healthBack: { standing: healthRegen, eating: (stats.healthRegen * SITTING_REGEN + stats.hp5) / 5 + kit.regen + food.health / food.seconds },
     manaBack: { overhead: mp5 * OVERHEAD_SECONDS + manaRegen * Math.max(0, OVERHEAD_SECONDS - FIVE_SECOND_RULE), drinking: manaRegen + mp5 + drink.mana / drink.seconds },
     fights: new Map(),
     pools: new Map(),
   }
   contexts.set(character, ctx)
   return ctx
+}
+
+// Seconds of eating and drinking after a simulated fight. Food and drink go down together; warlocks Life
+// Tap spare health into mana first.
+function restSeconds(ctx, result) {
+  const health = Math.max(0, result.hpLost - ctx.healthBack.standing * OVERHEAD_SECONDS)
+  const charges = result.charges.lightningShield * ctx.perCharge.lightningShield + result.charges.innerFire * ctx.perCharge.innerFire
+  const upkeep = ctx.upkeepPerSecond
+  // Buff upkeep runs through the whole cycle, drinking included.
+  let mana = Math.max(0, result.manaLost + charges + upkeep * (result.seconds + OVERHEAD_SECONDS) - ctx.manaBack.overhead)
+  const hr = ctx.healthBack.eating
+  const mr = ctx.manaBack.drinking - upkeep
+  let extraHealth = 0
+  if (ctx.lifeTap && mana > 0) {
+    const tap = clamp((mana * hr - health * mr) / (hr + mr), 0, mana)
+    mana -= tap
+    extraHealth = tap
+  }
+  const pet = result.petDied ? PET_REVIVE_SECONDS + 1 / PET_REGEN_PER_SECOND : Math.max(0, result.petLost / PET_REGEN_PER_SECOND - OVERHEAD_SECONDS)
+  return Math.max((health + extraHealth) / hr, mr > 0 ? mana / mr : mana > 0 ? Infinity : 0, pet)
+}
+
+// The fastest cycle (fight, rest, next pull) among the class's rotation variants, or null if every
+// variant dies or times out.
+function bestCycle(ctx, foe) {
+  let best = null
+  for (const variant of variantsFor(ctx.kit)) {
+    let result = simulate(ctx.kit, foe, variant)
+    let rest = restSeconds(ctx, result)
+    // Warriors' Bloodrage and Battle Shout outlast a fight; spread them over the real cycle.
+    if (ctx.kit.cls === 'Warrior' && !result.died) {
+      result = simulate(ctx.kit, foe, { ...variant, cycle: result.seconds + rest + OVERHEAD_SECONDS })
+      rest = restSeconds(ctx, result)
+    }
+    if (result.died || !Number.isFinite(rest)) continue
+    const seconds = result.seconds + rest + OVERHEAD_SECONDS
+    if (!best || seconds < best.seconds) best = { result, rest, seconds, variant }
+  }
+  return best
 }
 
 // How a fight against mob `entry` goes. Unbeatable mobs would kill the character before dying.
@@ -124,22 +156,18 @@ export function fightAgainst(character, entry) {
   if (fight) return fight
   const mob = MOBS[entry]
   const level = mobLevelFor(mob, character.characterLevel)
-  const fightSeconds = mobHealth(mob, level) / ctx.dps
-  const reduction = Math.min(MAX_ARMOR_REDUCTION, ctx.armor / (ctx.armor + 400 + 85 * level))
-  const damage = mob.dps * fightSeconds * (1 - reduction) * ctx.damageTaken
-  // Health and mana that regen while finding the next mob don't need eating or drinking back.
-  const healthToEat = Math.max(0, Math.min(damage, ctx.health) - ctx.healthBack.standing * OVERHEAD_SECONDS)
-  const manaToDrink = Math.max(0, Math.min(ctx.manaPerSecond * fightSeconds, ctx.mana) - ctx.manaBack.overhead)
-  const eatSeconds = Math.max(healthToEat / ctx.healthBack.eating, manaToDrink / ctx.manaBack.drinking)
+  const best = bestCycle(ctx, foeFor(mob, level))
   fight = {
     entry,
     mob,
     level,
-    fightSeconds,
-    damageShare: damage / ctx.health,
-    eatSeconds,
-    seconds: fightSeconds + eatSeconds + OVERHEAD_SECONDS,
-    beatable: damage < ctx.health,
+    fightSeconds: best ? best.result.seconds : MAX_FIGHT_SECONDS,
+    damageShare: best ? best.result.hpLost / ctx.health : 1,
+    eatSeconds: best ? best.rest : 0,
+    seconds: best ? best.seconds : Infinity,
+    beatable: !!best,
+    dps: best ? best.result.dps : 0,
+    variant: best?.variant,
     xp: killXp(character.characterLevel, level, mob),
     copper: (mob.coin ?? 0) + (mob.value ?? 0),
   }
@@ -200,7 +228,7 @@ export function farmRates(character, zone) {
   const power = combatOf(character).power
   const { total, weighted } = grindPool(character, zone.name)
   if (!total) {
-    return { power, beatable: false, killsPerHour: 0, xpPerHour: 0, copperPerHour: 0, fightSeconds: 0, eatSeconds: 0, mobLevels: null }
+    return { power, beatable: false, killsPerHour: 0, xpPerHour: 0, copperPerHour: 0, fightSeconds: 0, eatSeconds: 0, dps: 0, mobLevels: null }
   }
   const avg = (key) => weighted.reduce((sum, m) => sum + m.fight[key] * m.weight, 0) / total
   const seconds = avg('seconds')
@@ -214,6 +242,7 @@ export function farmRates(character, zone) {
     copperPerHour: avg('copper') * killsPerHour,
     fightSeconds: avg('fightSeconds'),
     eatSeconds: avg('eatSeconds'),
+    dps: avg('dps'),
     mobLevels: [Math.min(...levels), Math.max(...levels)],
   }
 }

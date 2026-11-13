@@ -7,12 +7,18 @@ const ID_PATTERN = /^[\w-]+$/
 const MS_PER_HOUR = 3600 * 1000
 
 export default class Account {
+  // `gold` (copper) is old account-wide money from before characters kept their own; it's split evenly.
   constructor(accountName, characters = [], guilds = [], gold = 0, lastTick = Date.now()) {
     this.accountName = accountName
     this.characters = characters
     this.guilds = guilds
-    this.gold = gold // in copper; may be fractional between ticks
+    for (const character of characters) character.copper += gold / characters.length
     this.lastTick = lastTick // ms timestamp up to which farming has been paid out
+  }
+
+  // All characters' money, in copper.
+  get gold() {
+    return this.characters.reduce((sum, c) => sum + c.copper, 0)
   }
 
   // Pays out farming from `lastTick` to `now`. Returns what was earned, who leveled up and new gear worn.
@@ -26,7 +32,6 @@ export default class Account {
       if (levels > 0) result.levelUps.push(character)
       for (const item of upgrades) result.upgrades.push({ character, item })
     }
-    this.gold += result.copper
     return result
   }
 
@@ -89,7 +94,7 @@ export default class Account {
       .map((c) => ({ ...c, characterSpec: c.characterSpec ?? defaultSpec(c.characterClass, c.characterRole) }))
       .filter((c) => Object.keys(Character.validate(c)).length === 0)
       .map((c) => {
-        const character = new Character({ ...c, characterXp: 0, zone: null, equipment: {}, bag: [], questsDone: [], questLog: {}, timeBank: 0, lootLog: [] })
+        const character = new Character({ ...c, characterXp: 0, zone: null, copper: 0, spells: undefined, equipment: {}, bag: [], questsDone: [], questLog: {}, timeBank: 0, lootLog: [] })
         const xp = Number(c.characterXp)
         if (Number.isFinite(xp) && xp > 0 && xp < character.xpToNextLevel) character.characterXp = xp
         if (!zoneLockReason(character, getZone(c.zone))) character.zone = c.zone
@@ -100,7 +105,8 @@ export default class Account {
     const guilds = data.guilds.map(
       (g) => new Guild(String(g.guildName), g.characterIds.filter((id) => ids.has(id))),
     )
-    const gold = Number(data.gold)
+    // Saves from before characters kept their own money have account-wide gold instead.
+    const gold = data.characters.some((c) => c?.copper !== undefined) ? 0 : Number(data.gold)
     const lastTick = Number(data.lastTick)
     return new Account(
       String(data.accountName),

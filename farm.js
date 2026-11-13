@@ -110,7 +110,7 @@ function renderZoneTables(account, character, onSend, onRecall) {
       el('span', { class: 'quest-hint', tabindex: 0, 'aria-label': 'How farming rates work', 'aria-describedby': 'farm-rules' },
         el('span', { class: 'quest-mark', 'aria-hidden': 'true' }, '!'),
         el('span', { class: 'hint-text', id: 'farm-rules', role: 'tooltip' },
-          'Characters fight the mobs in their zone. Power level sets their damage, mob health sets how long each fight lasts, ',
+          'Characters fight the mobs in their zone, simulated with their gear and the best rotation of the spells they have trained, ',
           'and they eat and drink back up after (free vendor food and water for their level; health, mana, armor and spirit regen set how long). Quests come first: they hunt whatever their quests need, ',
           'then grind anything they can beat. Rates here are for grinding; quest XP, gold and gear come on top. ',
           'XP falls off as mobs drop below your level and stops once they turn gray; gold keeps coming.'),

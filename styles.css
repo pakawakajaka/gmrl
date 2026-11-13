@@ -900,8 +900,16 @@ input[type="number"] {
   box-shadow: inset 3px 0 0 var(--accent);
 }
 
-.zone-farmers {
+/* Takes the table's spare width and wraps between names, so a busy zone grows taller instead of wider. */
+.zone-table .zone-farmers {
+  width: 100%;
+  min-width: 8rem;
+  white-space: normal;
   font-size: 0.85rem;
+}
+
+.zone-farmers > span {
+  white-space: nowrap;
 }
 
 .zone-action {

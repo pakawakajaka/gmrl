@@ -6,8 +6,12 @@ import { grayLevel } from './zones.js'
 
 // Quests worked on at once. Kills count for every quest in the log that needs them.
 export const QUEST_LOG_SIZE = 5
-// Travel, talking, and objectives that aren't mobs (objects to collect, items to deliver) for each quest.
+// Travel and talking for each quest.
 export const QUEST_SECONDS = 300
+// Each objective step that isn't a mob: an object to use or loot, an item to pick up, a spell to cast on something.
+export const STEP_SECONDS = 30
+
+export const turnInSeconds = (questId) => QUEST_SECONDS + STEP_SECONDS * (QUESTS[questId].steps ?? 0)
 
 // A quest's tracked objectives: [{ id, count, name?, sources: [mob entry], chances?: Map(entry -> %) }].
 // Kill objectives are credited by any of their sources; item objectives drop from them at a chance.
@@ -85,7 +89,7 @@ export function activeQuests(character, zoneName) {
 export function nextAction(character, zoneName, random = Math.random) {
   const active = activeQuests(character, zoneName)
   for (const questId of active) {
-    if (isComplete(character, questId)) return { questId, seconds: QUEST_SECONDS }
+    if (isComplete(character, questId)) return { questId, seconds: turnInSeconds(questId) }
   }
   for (const questId of active) {
     const counts = questProgress(character, questId)
