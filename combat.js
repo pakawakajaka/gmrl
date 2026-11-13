@@ -76,7 +76,7 @@ export function questXp(level, quest) {
 
 // Per-character fight numbers, rebuilt when level, gear or trained spells change.
 const contexts = new WeakMap()
-function combatOf(character) {
+export function combatOf(character) {
   const key = `${character.characterLevel}|${Object.values(character.equipment).join()}|${character.spells.length}`
   let ctx = contexts.get(character)
   if (ctx?.key === key) return ctx
@@ -105,6 +105,7 @@ function combatOf(character) {
     manaBack: { overhead: mp5 * OVERHEAD_SECONDS + manaRegen * Math.max(0, OVERHEAD_SECONDS - FIVE_SECOND_RULE), drinking: manaRegen + mp5 + drink.mana / drink.seconds },
     fights: new Map(),
     pools: new Map(),
+    duels: new Map(), // see pvp.js
   }
   contexts.set(character, ctx)
   return ctx
@@ -112,7 +113,7 @@ function combatOf(character) {
 
 // Seconds of eating and drinking after a simulated fight. Food and drink go down together; warlocks Life
 // Tap spare health into mana first.
-function restSeconds(ctx, result) {
+export function restSeconds(ctx, result) {
   const health = Math.max(0, result.hpLost - ctx.healthBack.standing * OVERHEAD_SECONDS)
   const charges = result.charges.lightningShield * ctx.perCharge.lightningShield + result.charges.innerFire * ctx.perCharge.innerFire
   const upkeep = ctx.upkeepPerSecond

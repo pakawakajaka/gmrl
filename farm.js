@@ -55,6 +55,8 @@ function renderFarmer(character, isSelected, onSelect, onRecall) {
       el('span', { class: 'farmer-info' },
         el('span', { class: 'farmer-level' }, `Level ${character.characterLevel} ${character.characterClass}`),
         el('span', { class: 'farmer-level' }, `Power level ${formatNumber(Math.round(character.power.solo))}`),
+        (character.honorableKills > 0 || character.pvpDeaths > 0) && el('span', { class: 'farmer-level' },
+          `${formatNumber(character.honorableKills)} HK · ${formatNumber(character.pvpDeaths)} PvP death${character.pvpDeaths === 1 ? '' : 's'}`),
         el('span', { class: 'farmer-zone' }, character.zone ?? 'Idle',
           zone && el('span', { class: 'visually-hidden' }, ` (${difficulty} difficulty)`)),
       ),

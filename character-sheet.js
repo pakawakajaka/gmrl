@@ -1,8 +1,9 @@
-import { el, formatNumber, money } from './dom.js'
+import { el, formatChance, formatDuration, formatNumber, money } from './dom.js'
 import { CLASS_BITS, INVENTORY_TYPES, QUALITIES, QUEST_ITEMS, RACE_BITS, SLOTS, getItem, getQuest, itemTypeName } from './gear.js'
 import { SCHOOLS, STAT_NAMES, characterStats } from './stats.js'
 import { drinkFor, foodFor, getMob } from './combat.js'
 import { objectivesOf, questProgress } from './quests.js'
+import { mountOf } from './pvp.js'
 import { getSpell, knownAbilities } from './spells.js'
 
 const LEFT = ['head', 'neck', 'shoulder', 'back', 'chest', 'shirt', 'tabard', 'wrist']
@@ -32,7 +33,10 @@ export function renderCharacterSheet({ character, onDelete }) {
       ),
     ),
     el('div', { class: 'sheet-layout' },
-      renderPaperDoll(character),
+      el('div', { class: 'sheet-column' },
+        renderPaperDoll(character),
+        renderPvp(character),
+      ),
       renderStats(character, stats),
     ),
     el('div', { class: 'sheet-layout' },
@@ -132,6 +136,7 @@ function renderStats(character, s) {
   const damage = (d) => `${Math.floor(d.min)} - ${Math.floor(d.max)}`
   const { melee, ranged, defenses, spell } = s
   const rates = character.rates
+  const mount = mountOf(character)
   return el('section', { class: 'sheet-stats', 'aria-label': 'Stats' },
     group('Combat', [
       ['Power Level', Math.round(character.power.solo)],
@@ -141,6 +146,7 @@ function renderStats(character, s) {
       ['Combat / Eat', rates?.beatable ? `${Math.round(rates.fightSeconds)}s / ${Math.round(rates.eatSeconds)}s` : '—'],
       ['Food', foodFor(character.characterLevel).name],
       s.mana > 0 && ['Drink', drinkFor(character.characterLevel).name],
+      ['Mount', mount ? `${mount.name} (+${Math.round((mount.speed - 1) * 100)}% speed)` : 'None'],
     ]),
     group('Farm', [
       ['Kills / hr', rates ? formatNumber(rates.killsPerHour) : '—'],
@@ -189,7 +195,8 @@ function renderStats(character, s) {
     ]),
     group('Resistances', SCHOOLS.map((school) => [capitalize(school), s.resist[school]])),
     group('Trained Spells', Object.entries(knownAbilities(character)).map(([name, id]) => [name, `Rank ${getSpell(id).rank ?? 1}`])),
-    el('p', { class: 'note' }, 'Fights are simulated swing by swing and cast by cast, with the best rotation of the spells the character has trained and the gear it wears. After each fight the character eats and drinks back what they lost; health, mana, armor and spirit regen set how long that takes. Food and drink are the best vendor kind for their level, free. Each character keeps its own gold and buys new spell ranks as soon as it can afford them. Item level is the average of worn gear (empty slots count as 0). Farm rates are for grinding the current zone, before quest rewards. Stats are without talents or buffs.'),
+    el('span', { class: 'info-mark', tabindex: 0, 'aria-label': 'How these numbers work', 'aria-describedby': 'stats-note' }, '!',
+      el('span', { id: 'stats-note', class: 'tooltip', role: 'tooltip' }, 'Fights are simulated swing by swing and cast by cast, with the best rotation of the spells the character has trained and the gear it wears. After each fight the character eats and drinks back what they lost; health, mana, armor and spirit regen set how long that takes. Food and drink are the best vendor kind for their level, free. Each character keeps its own gold and buys new spell ranks as soon as it can afford them. Item level is the average of worn gear (empty slots count as 0). Farm rates are for grinding the current zone, before quest rewards. Stats are without talents or buffs.')),
   )
 }
 
@@ -242,6 +249,46 @@ function renderProgress(character) {
         )
       }))
       : el('p', { class: 'empty' }, 'Nothing yet.'),
+  )
+}
+
+const PVP_RESULTS = { true: ['win', 'Killed'], false: ['loss', 'Died to'], null: ['draw', 'Walked away from'] }
+const PVP_ESCAPES = { ran: 'Outran', hid: 'Hid from', hearth: 'Bubble-hearthed away from' }
+
+function pvpDetail(e) {
+  if (e.fled && e.fled !== 'hearth' && !e.caught) return `${e.zone}. Spotted them first and escaped.`
+  const chance = e.odds !== undefined ? formatChance(e.odds) : null
+  const start = e.joined ? 'Added to the fight.'
+    : e.attacked ? `Opened on them: sized it up at ${formatChance(e.guess)}${chance ? `, really ${chance}` : ''}.`
+      : e.caught ? `${e.fled === 'hid' ? 'Got found hiding' : 'Got chased down'}${chance ? `: ${chance} to win` : ''}.`
+        : `${e.won === false ? 'Got ganked' : 'Got attacked'}${chance ? `: ${chance} to win` : ''}.`
+  const brawl = e.size ? ` ${e.size[0]}v${e.size[1]} brawl, ${e.kills} kill${e.kills === 1 ? '' : 's'}.` : ''
+  return `${e.zone}${e.honor ? ', honorable kill' : ''}. ${start}${brawl}`
+}
+
+function renderPvp(character) {
+  const { honorableKills, pvpKills, pvpDeaths, pvpLog } = character
+  const tally = (label, value) => el('div', {}, el('dt', {}, label), el('dd', {}, formatNumber(value)))
+  return el('section', { class: 'sheet-panel sheet-pvp', 'aria-label': 'World PvP' },
+    el('h3', {}, 'World PvP'),
+    el('dl', { class: 'pvp-tally' },
+      tally('Honorable Kills', honorableKills),
+      tally('Kills', pvpKills),
+      tally('Deaths', pvpDeaths),
+    ),
+    pvpLog.length
+      ? el('ul', { class: 'pvp-log' }, pvpLog.map((e) => {
+        const [kind, verb] = PVP_RESULTS[e.won]
+        const escaped = e.won === null && (e.fled === 'hearth' || (e.fled && !e.caught))
+        return el('li', { class: `pvp-${kind}` },
+          el('span', { class: 'pvp-headline' },
+            el('span', {}, `${escaped ? PVP_ESCAPES[e.fled] : verb} ${e.foe}`, el('span', { class: 'pvp-foe' }, ` ${e.foeLevel} ${e.foeRace} ${e.foeClass}`)),
+            el('span', { class: 'pvp-when' }, `${formatDuration((Date.now() - e.at) / 3600000)} ago`),
+          ),
+          el('span', { class: 'pvp-detail' }, pvpDetail(e)),
+        )
+      }))
+      : el('p', { class: 'empty' }, 'No fights yet. Characters of opposite factions farming the same contested zone run into each other.'),
   )
 }
 

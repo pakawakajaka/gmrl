@@ -13,7 +13,7 @@ const LOG_SIZE = 20
 export default class Character {
   #planned = null // the next action in the current zone, kept until there's time to do it
 
-  constructor({ id = crypto.randomUUID(), characterName, characterClass, characterSpec, characterRace, characterRole, characterLevel = MIN_LEVEL, characterXp = 0, zone = null, copper = 0, spells, equipment = {}, bag = [], questsDone = [], questLog = {}, timeBank = 0, lootLog = [] }) {
+  constructor({ id = crypto.randomUUID(), characterName, characterClass, characterSpec, characterRace, characterRole, characterLevel = MIN_LEVEL, characterXp = 0, zone = null, copper = 0, spells, equipment = {}, bag = [], questsDone = [], questLog = {}, timeBank = 0, lootLog = [], honorableKills = 0, pvpKills = 0, pvpDeaths = 0, pvpLog = [], pvpReadyAt = 0, hearthReadyAt = 0 }) {
     this.id = id
     this.characterName = Character.formatName(characterName)
     this.characterClass = characterClass
@@ -29,8 +29,14 @@ export default class Character {
     this.bag = bag // item ids kept until the character is high enough level to wear them
     this.questsDone = questsDone // quest ids
     this.questLog = questLog // { questId: [count per objective] } for quests with progress
-    this.timeBank = timeBank // farmed seconds not yet spent on a kill or quest
+    this.timeBank = timeBank // farmed seconds not yet spent on a kill or quest; below zero after world PvP
     this.lootLog = lootLog // newest first: { item, source, at, equipped, quest? }
+    this.honorableKills = honorableKills // players killed who weren't gray to the character
+    this.pvpKills = pvpKills // all players killed
+    this.pvpDeaths = pvpDeaths
+    this.pvpLog = pvpLog // newest first: see worldPvp in pvp.js
+    this.pvpReadyAt = pvpReadyAt // ms time until which the character neither spots nor is spotted
+    this.hearthReadyAt = hearthReadyAt // ms time the Hearthstone is back
   }
 
   get xpToNextLevel() {
@@ -167,7 +173,8 @@ export default class Character {
     this.lootLog = [...entries.reverse(), ...this.lootLog].slice(0, LOG_SIZE)
   }
 
-  // Restores gear, money and spell fields from untrusted saved data, dropping anything that doesn't exist.
+  // Restores gear, money, spell, quest and PvP fields from untrusted saved data, dropping anything that
+  // doesn't exist.
   restoreGear(data) {
     const ids = (list) => (Array.isArray(list) ? list.map(itemKey).filter((key) => key !== undefined) : [])
     const fraction = (value, max) => (Number.isFinite(Number(value)) ? Math.min(Math.max(Number(value), 0), max) : 0)
@@ -184,11 +191,39 @@ export default class Character {
       const objectives = objectivesOf(id)
       if (counts.length === objectives.length) this.questLog[id] = objectives.map((o, i) => Math.floor(fraction(counts[i], o.count)))
     }
-    this.timeBank = fraction(data.timeBank, 3600)
+    this.timeBank = Number.isFinite(Number(data.timeBank)) ? Math.min(Math.max(Number(data.timeBank), -3600), 3600) : 0
     this.lootLog = (Array.isArray(data.lootLog) ? data.lootLog : [])
       .filter((e) => e && itemKey(e.item) !== undefined && typeof e.source === 'string' && Number.isFinite(Number(e.at)))
       .slice(0, LOG_SIZE)
       .map((e) => ({ item: itemKey(e.item), source: e.source.slice(0, 100), at: Number(e.at), equipped: e.equipped === true, ...(e.quest === true && { quest: true }) }))
+    const count = (value) => Math.floor(fraction(value, Number.MAX_SAFE_INTEGER))
+    this.honorableKills = count(data.honorableKills)
+    this.pvpKills = Math.max(count(data.pvpKills), this.honorableKills)
+    this.pvpDeaths = count(data.pvpDeaths)
+    this.pvpLog = (Array.isArray(data.pvpLog) ? data.pvpLog : [])
+      .filter((e) => e && Number.isFinite(Number(e.at)) && typeof e.foe === 'string' && lookup(CLASSES, e.foeClass) && lookup(RACES, e.foeRace) && typeof e.zone === 'string')
+      .slice(0, LOG_SIZE)
+      .map((e) => ({
+        at: Number(e.at),
+        foe: e.foe.slice(0, 12),
+        foeLevel: Math.floor(fraction(e.foeLevel, MAX_LEVEL)) || MIN_LEVEL,
+        foeClass: e.foeClass,
+        foeRace: e.foeRace,
+        zone: e.zone.slice(0, 100),
+        attacked: e.attacked === true,
+        ...(e.joined === true && { joined: true }),
+        won: typeof e.won === 'boolean' ? e.won : null,
+        ...(e.odds !== undefined && { odds: fraction(e.odds, 1) }),
+        ...(e.guess !== undefined && { guess: fraction(e.guess, 1) }),
+        ...(Array.isArray(e.size) && { size: [0, 1].map((i) => Math.floor(fraction(e.size[i], 5)) || 1) }),
+        ...(e.kills !== undefined && { kills: Math.floor(fraction(e.kills, 5)) }),
+        ...(e.honor === true && { honor: true }),
+        ...(['ran', 'hid', 'hearth'].includes(e.fled) && { fled: e.fled }),
+        ...(e.caught === true && { caught: true }),
+      }))
+    const later = (value) => fraction(value, Date.now() + 24 * 3600 * 1000)
+    this.pvpReadyAt = later(data.pvpReadyAt)
+    this.hearthReadyAt = later(data.hearthReadyAt)
     this.equipment = {}
     this.bag = []
     this.equipBest([...ids(equipped), ...ids(data.bag)])

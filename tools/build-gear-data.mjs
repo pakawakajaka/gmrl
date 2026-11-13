@@ -557,8 +557,12 @@ const ROTATION_SPELLS = {
   Warlock: ['Shadow Bolt', 'Immolate', 'Corruption', 'Curse of Agony', 'Life Tap', 'Drain Life', 'Demon Skin', 'Demon Armor'],
   Paladin: ['Seal of Righteousness', 'Holy Light', 'Devotion Aura', 'Blessing of Might', 'Judgement'],
   Shaman: ['Lightning Bolt', 'Healing Wave', 'Earth Shock', 'Lightning Shield', 'Flame Shock'],
-  Druid: ['Wrath', 'Healing Touch', 'Mark of the Wild', 'Moonfire', 'Rejuvenation', 'Thorns', 'Cat Form', 'Claw', 'Rake', 'Rip', 'Ferocious Bite'],
+  Druid: ['Wrath', 'Healing Touch', 'Mark of the Wild', 'Moonfire', 'Rejuvenation', 'Thorns', 'Cat Form', 'Claw', 'Rake', 'Rip', 'Ferocious Bite', 'Bear Form', 'Maul', 'Dire Bear Form', 'Aquatic Form', 'Travel Form'],
 }
+// Spells class quests teach rather than trainers, with Maul rank 1 coming along with Bear Form: id -> level.
+const QUEST_TAUGHT = { Druid: { 5487: 10, 6807: 10, 1066: 16 } } // Bear Form, Maul, Aquatic Form
+// Druid forms' passives, which CMaNGOS applies from code (Unit::HandleShapeshiftBoosts).
+const FORM_PASSIVES = { 768: 3025, 5487: 1178, 9634: 9635, 1066: 5421, 783: 5419 }
 // SpellCastTimes.dbc and SpellDuration.dbc entries the rotation spells use (ms; -1 = until cancelled).
 const CAST_MS = { 1: 0, 4: 1000, 5: 2000, 6: 5000, 7: 10000, 14: 3000, 16: 1500, 18: 0, 19: 2500, 20: 2500, 21: 2600, 22: 3500, 23: 1800, 24: 2200, 90: 1700, 91: 2800, 171: 6000 }
 const DURATION_MS = {
@@ -638,6 +642,10 @@ function buildSpell(id) {
   }
   spell.effects = effects
   for (const e of effects) if (e.trigger) buildSpell(e.trigger)
+  if (FORM_PASSIVES[id]) {
+    spell.passive = FORM_PASSIVES[id]
+    buildSpell(spell.passive)
+  }
   const proc = LIGHTNING_SHIELD_PROC[id] ?? RIGHTEOUSNESS_PROC[id] ?? (s.SpellIconID === 70 && s.SpellFamilyName === 10 && id !== HOLY_LIGHT_HEAL ? HOLY_LIGHT_HEAL : 0)
   if (proc) {
     spell.proc = proc
@@ -661,6 +669,7 @@ for (const [cls, names] of Object.entries(ROTATION_SPELLS)) {
   }
   const starting = [...new Set(createSpells.filter((r) => r.class === classId).map((r) => r.Spell))]
   for (const id of starting) ranks.set(id, { level: 1, cost: 0 })
+  for (const [id, level] of Object.entries(QUEST_TAUGHT[cls] ?? {})) ranks.set(Number(id), { level, cost: 0 })
   classSpells[cls] = {}
   for (const name of names) {
     const list = [...ranks].filter(([id]) => spells.get(id)?.SpellName === name)

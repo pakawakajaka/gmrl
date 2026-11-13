@@ -1,18 +1,21 @@
 import { renderCharacterForm } from './character-form.js'
 import { renderCharacterSheet } from './character-sheet.js'
 import { MAX_LEVEL } from './data.js'
-import { el, formatDuration, formatMoney, money } from './dom.js'
+import { el, formatChance, formatDuration, formatMoney, money } from './dom.js'
 import { renderFarm, updateFarm } from './farm.js'
 import { getItem } from './gear.js'
 import { renderRoster } from './roster.js'
 import { DEFAULT_SORT } from './sort.js'
 import { createDefaultAccount, loadAccount, saveAccount, saveAccountToFile } from './storage.js'
+import { renderWorldPvp, headline } from './world-pvp.js'
+import { encounterRecord } from './pvp.js'
 
 const APP_TITLE = 'Guild Master Raid Leader'
 const TICK_MS = 1000
 const SAVE_EVERY_MS = 15000
 const MAX_NOTICES = 4
 const MAX_UPGRADE_NOTICES = 3
+const MAX_FIGHT_NOTICES = 2
 
 const app = document.getElementById('app')
 const goldEl = document.getElementById('gold')
@@ -52,6 +55,8 @@ function render() {
       onSend: handleSend,
       onRecall: handleRecall,
     }))
+  } else if (view === 'pvp') {
+    app.replaceChildren(renderWorldPvp({ account, encounterId: id }))
   } else {
     app.replaceChildren(renderRoster({
       account,
@@ -65,7 +70,7 @@ function render() {
   }
 
   for (const link of document.querySelectorAll('.site-nav a')) {
-    const active = link.dataset.view === (view === 'farm' ? 'farm' : 'roster')
+    const active = link.dataset.view === (view === 'farm' || view === 'pvp' ? view : 'roster')
     if (active) link.setAttribute('aria-current', 'page')
     else link.removeAttribute('aria-current')
   }
@@ -113,11 +118,36 @@ function reportUpgrades(upgrades) {
   if (more > 0) notify(`…and ${more} more gear upgrade${more === 1 ? '' : 's'}. Open a character page to see them.`)
 }
 
+function reportFights(fights) {
+  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`
+  for (const f of fights.slice(0, MAX_FIGHT_NOTICES)) {
+    const e = encounterRecord(f, f.id)
+    const who = (m) => [account.getCharacter(m.id) ? el('a', { href: `#/character/${m.id}` }, m.name) : m.name, ` (${m.level} ${m.class})`]
+    const view = [' ', el('a', { href: `#/pvp/${f.id}` }, 'View')]
+    if (f.kind === 'evade') {
+      notify(...headline(e, who), ` in ${f.zone}.`, ...view)
+      continue
+    }
+    const odds = ` Sized it up at ${formatChance(f.guess)}; really ${formatChance(f.odds)}.`
+    if (f.kind === 'duel') {
+      notify(...headline(e, who), ` in ${f.zone}.${f.honor ? ' Honorable kill.' : ''}${odds}`, ...view)
+    } else {
+      const sizes = f.sides.map((s) => s.length).join('v')
+      const result = f.winner === null ? 'nobody won' : `the ${f.sides[f.winner][0].faction} won`
+      const tolls = [f.dead.length && plural(f.dead.length, 'death'), f.honor && plural(f.honor, 'honorable kill')].filter(Boolean)
+      notify(...headline(e, who), ` in ${f.zone}. It turned into a ${sizes} brawl and ${result}${tolls.length ? ` (${tolls.join(', ')})` : ''}.`, ...view)
+    }
+  }
+  const more = fights.length - MAX_FIGHT_NOTICES
+  if (more > 0) notify(`…and ${more} more world PvP encounter${more === 1 ? '' : 's'}. See them on `, el('a', { href: '#/pvp' }, 'World PvP'), '.')
+}
+
 function gameTick() {
-  const { levelUps, upgrades } = account.tick()
+  const { levelUps, upgrades, fights } = account.tick()
   reportLevelUps(levelUps)
   reportUpgrades(upgrades)
-  if (levelUps.length || upgrades.length) {
+  reportFights(fights)
+  if (levelUps.length || upgrades.length || fights.length) {
     if (!app.querySelector('dialog[open]')) render() // don't close an open modal; the next render catches up
     save()
   } else if (currentView().view === 'farm') {
@@ -188,10 +218,14 @@ function handleReset() {
 
 // Pay out anything earned while the page was closed.
 const away = account.tick()
-if (away.hours >= 1 / 60 && (away.copper >= 1 || away.levelUps.length)) {
+if (away.hours >= 1 / 60 && (away.copper >= 1 || away.levelUps.length || away.fights.length)) {
+  reportFights(away.fights)
   reportUpgrades(away.upgrades)
   reportLevelUps(away.levelUps)
-  notify(`Welcome back! While you were away for ${formatDuration(away.hours)}, your characters earned ${formatMoney(away.copper)}${away.upgrades.length ? ` and equipped ${away.upgrades.length} new item${away.upgrades.length === 1 ? '' : 's'}` : ''}.`)
+  const battles = away.fights.filter((f) => f.kind !== 'evade')
+  const kills = battles.reduce((sum, f) => sum + f.honor, 0)
+  const fought = battles.length ? ` Your characters fought ${battles.length} time${battles.length === 1 ? '' : 's'} in contested zones (${kills} honorable kill${kills === 1 ? '' : 's'}).` : ''
+  notify(`Welcome back! While you were away for ${formatDuration(away.hours)}, your characters earned ${formatMoney(away.copper)}${away.upgrades.length ? ` and equipped ${away.upgrades.length} new item${away.upgrades.length === 1 ? '' : 's'}` : ''}.${fought}`)
   save()
 }
 if (loaded.dropped > 0) {

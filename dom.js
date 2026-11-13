@@ -41,6 +41,13 @@ export function money(copper) {
   ]))
 }
 
+// A probability, e.g. "42%", "< 1%", "> 99%"
+export function formatChance(p) {
+  if (p < 0.005) return '< 1%'
+  if (p > 0.995) return '> 99%'
+  return `${Math.round(p * 100)}%`
+}
+
 // e.g. "3d 4h", "2h 13m", "45m", "< 1m"
 export function formatDuration(hours) {
   if (!Number.isFinite(hours)) return '—'

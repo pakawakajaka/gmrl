@@ -1131,6 +1131,7 @@ main:has(.character-sheet) {
 }
 
 .sheet-stats {
+  position: relative;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
   gap: 1rem 1.5rem;
@@ -1158,6 +1159,40 @@ main:has(.character-sheet) {
 .stat-group dd {
   margin: 0;
   text-align: right;
+}
+
+/* WoW quest-giver "!" that reveals an explanation on hover or keyboard focus. */
+.info-mark {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.75rem;
+  cursor: help;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 1.6rem;
+  font-weight: 700;
+  line-height: 1;
+  color: #ffd100;
+  text-shadow: 0 0 2px #000, 0 0 6px rgb(255 209 0 / 0.6);
+}
+
+.info-mark:focus-visible {
+  outline: 2px solid var(--accent);
+  border-radius: 4px;
+}
+
+.info-mark .tooltip {
+  top: 100%;
+  right: 0;
+  margin-top: 0.4rem;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 0.85rem;
+  font-weight: 400;
+  text-shadow: none;
+}
+
+.info-mark:hover > .tooltip,
+.info-mark:focus > .tooltip {
+  display: block;
 }
 
 .note {
@@ -1210,9 +1245,380 @@ main:has(.character-sheet) {
   grid-template-columns: repeat(auto-fill, 48px);
 }
 
+/* Paper doll on top, PvP filling the rest of the column beside the stats. */
+.sheet-column {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 1.5rem;
+  align-self: stretch;
+}
+
+.sheet-pvp {
+  grid-template-rows: auto auto minmax(0, 1fr);
+  align-content: start;
+}
+
+.pvp-tally {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin: 0;
+  text-align: center;
+}
+
+.pvp-tally div {
+  padding: 0.4rem;
+  border-radius: 6px;
+  background: var(--surface-raised);
+}
+
+.pvp-tally dt {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.pvp-tally dd {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.pvp-log {
+  display: grid;
+  align-content: start;
+  gap: 0.35rem;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.pvp-log li {
+  display: grid;
+  gap: 0.1rem;
+  padding: 0.35rem 0.5rem;
+  border-left: 3px solid var(--pvp-result);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  font-size: 0.85rem;
+}
+
+.pvp-win { --pvp-result: #1eff00; }
+.pvp-loss { --pvp-result: #ff4040; }
+.pvp-draw { --pvp-result: var(--text-muted); }
+
+.pvp-headline {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.pvp-foe,
+.pvp-when,
+.pvp-detail {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.pvp-when {
+  flex: none;
+}
+
+/* World PvP page */
+
+.encounter-tally {
+  grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));
+  margin-bottom: 1.25rem;
+}
+
+.world-pvp > .note {
+  margin-bottom: 0.75rem;
+}
+
+.encounter-list {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.encounter-alliance { --encounter-color: var(--alliance); }
+.encounter-horde { --encounter-color: var(--horde); }
+.encounter-none { --encounter-color: var(--text-muted); }
+
+.encounter-row {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  padding: 0.6rem 0.85rem;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--encounter-color);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: inherit;
+  text-decoration: none;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+
+.encounter-row:hover {
+  border-color: var(--encounter-color);
+  background: var(--surface-raised);
+}
+
+.encounter-shape {
+  flex: none;
+  min-width: 4.5rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 4px;
+  background: var(--surface-raised);
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.encounter-main {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+
+.encounter-meta,
+.encounter-when {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.encounter-when {
+  flex: none;
+}
+
+.encounter-summary {
+  margin-bottom: 1.25rem;
+  padding: 0.6rem 0.85rem;
+  border-left: 4px solid var(--encounter-color);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.encounter-sides {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.encounter-members {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.encounter-member {
+  --class-color: var(--text-muted);
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--tile-color);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.encounter-member.dead {
+  opacity: 0.65;
+}
+
+.encounter-member .character-name {
+  font-size: 1rem;
+}
+
+.encounter-member .character-name a {
+  color: inherit;
+}
+
+.encounter-timeline {
+  display: grid;
+  gap: 0.3rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.encounter-timeline li {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.encounter-time {
+  flex: none;
+  min-width: 2.75rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.encounter-breakdown {
+  --class-color: var(--text-muted);
+  margin-bottom: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--class-color);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.encounter-breakdown summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.75rem;
+  cursor: pointer;
+}
+
+.encounter-abilities {
+  width: 100%;
+  margin-top: 0.5rem;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.encounter-abilities th,
+.encounter-abilities td {
+  padding: 0.15rem 0.4rem;
+  text-align: right;
+}
+
+.encounter-abilities th:first-child {
+  text-align: left;
+}
+
+.encounter-abilities thead th {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.encounter-abilities tbody th {
+  font-weight: normal;
+}
+
+.encounter-log {
+  max-height: 28rem;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+  font-size: 0.9rem;
+}
+
+.encounter-log li {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.1rem 0;
+}
+
+.encounter-log li > span:nth-child(2) {
+  flex: 1;
+}
+
+.encounter-log .encounter-time {
+  min-width: 3.5rem;
+}
+
+.encounter-hp {
+  flex: none;
+  min-width: 3.5rem;
+  color: var(--text-muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.encounter-log .encounter-mark {
+  font-weight: 600;
+}
+
+/* Warcraft Logs coloring: players in their class color, abilities in their spell school's. */
+.actor {
+  color: var(--class-color);
+  font-weight: 600;
+}
+
+.spell {
+  --school-color: var(--text);
+  color: var(--school-color);
+}
+
+.school-physical { --school-color: #ffff00; }
+.school-holy { --school-color: #ffe680; }
+.school-fire { --school-color: #ff8000; }
+.school-nature { --school-color: #4dff4d; }
+.school-frost { --school-color: #80ffff; }
+.school-shadow { --school-color: #8080ff; }
+.school-arcane { --school-color: #ff80ff; }
+
+.meter-bar {
+  --school-color: var(--text-muted);
+  display: block;
+  height: 0.35rem;
+  border-radius: 2px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.meter-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--school-color);
+}
+
+.meter-bar.meter-class {
+  flex-basis: 100%;
+}
+
+.meter-bar.meter-class > span {
+  background: var(--class-color);
+}
+
+.encounter-share {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+.encounter-share .meter-bar {
+  width: 4rem;
+}
+
+@media (max-width: 640px) {
+  .encounter-sides {
+    grid-template-columns: 1fr;
+  }
+
+  .encounter-row {
+    flex-wrap: wrap;
+  }
+}
+
+@media (min-width: 901px) {
+  /* Sized by the column, not its log, so a long log scrolls instead of stretching the row. */
+  .sheet-pvp {
+    contain: size;
+    min-height: 16rem;
+  }
+}
+
 @media (max-width: 900px) {
   .sheet-layout {
     grid-template-columns: 1fr;
+  }
+
+  .pvp-log {
+    max-height: 24rem;
   }
 }
 
