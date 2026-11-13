@@ -1,5 +1,6 @@
 // Classic gear rules: who can use what, where it goes, how good it is for a spec, and loot/quest rolls.
 import { BASE_HEALTH_MANA, BASE_STATS, ITEMS, LOOT, LOOT_REFS, MOBS, QUESTS, QUEST_ITEMS, SUFFIXES, SUFFIX_POOLS, ZONE_QUESTS } from './gear-data.js'
+import { CLASSES } from './data.js'
 
 export { BASE_HEALTH_MANA, BASE_STATS, QUESTS, QUEST_ITEMS, ZONE_QUESTS }
 
@@ -243,6 +244,27 @@ export function bestLoadout(character, owned) {
   for (const id of used) leftovers.splice(leftovers.indexOf(id), 1)
   return { equipment, leftovers }
 }
+
+// Every spec and role the class can play, e.g. Feral Combat as both Tank and DPS.
+export const specOptions = (characterClass) => Object.entries(Object.hasOwn(CLASSES, characterClass) ? CLASSES[characterClass].specs : {})
+  .flatMap(([spec, roles]) => roles.map((role) => ({ spec, role, label: roles.length > 1 ? `${spec} (${role})` : spec })))
+
+// The best gear in `owned` for the character's other specs: { item id: [spec labels] } for each item another
+// spec's best set would wear. Specs that value gear the same way as the character's own are skipped.
+export function offSpecGear(character, owned) {
+  const own = profileOf(character)
+  const sets = new Map() // profile -> worn ids
+  const kept = new Map()
+  for (const option of specOptions(character.characterClass)) {
+    const as = { ...pick(character), characterSpec: option.spec, characterRole: option.role }
+    const profile = profileOf(as)
+    if (profile === own) continue
+    if (!sets.has(profile)) sets.set(profile, new Set(Object.values(bestLoadout(as, owned).equipment)))
+    for (const id of sets.get(profile)) kept.set(id, [...(kept.get(id) ?? []), option.label])
+  }
+  return kept
+}
+const pick = ({ characterClass, characterRace, characterLevel }) => ({ characterClass, characterRace, characterLevel })
 
 // ---- Loot ----
 function rollLootList(entries, out, random) {

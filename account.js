@@ -32,13 +32,13 @@ export default class Account {
   }
 
   // Pays out farming from `lastTick` to `now`, with world PvP in contested zones along the way. Returns
-  // what was earned, who leveled up, new gear still worn and the PvP fights (each with the `id` of its
-  // encounter record).
+  // what was earned, who leveled up, new gear still worn, the PvP fights (each with the `id` of its
+  // encounter record) and moves along leveling paths ({ character, from, to, reason, level }).
   tick(now = Date.now(), random = Math.random) {
     const hours = Math.max(0, now - this.lastTick) / MS_PER_HOUR
     const start = Math.min(this.lastTick, now)
     this.lastTick = Math.max(this.lastTick, now)
-    const result = { hours, copper: 0, levelUps: [], upgrades: [], fights: [] }
+    const result = { hours, copper: 0, levelUps: [], upgrades: [], fights: [], travels: [] }
     const leveled = new Set()
     const upgraded = new Map(this.characters.map((c) => [c, new Set()]))
     for (let done = 0; done < hours; done += SLICE_HOURS) {
@@ -50,10 +50,11 @@ export default class Account {
       }
       result.fights.push(...fights)
       for (const character of this.characters) {
-        const { copper, levels, upgrades } = character.farm(slice, now)
+        const { copper, levels, upgrades, travels } = character.farm(slice, now)
         result.copper += copper
         if (levels > 0) leveled.add(character)
         for (const item of upgrades) upgraded.get(character).add(item)
+        for (const travel of travels) result.travels.push({ character, ...travel })
       }
     }
     result.levelUps = [...leveled]
@@ -126,7 +127,7 @@ export default class Account {
       .map((c) => ({ ...c, characterSpec: c.characterSpec ?? defaultSpec(c.characterClass, c.characterRole) }))
       .filter((c) => Object.keys(Character.validate(c)).length === 0)
       .map((c) => {
-        const character = new Character({ ...c, characterXp: 0, zone: null, copper: 0, spells: undefined, talents: {}, equipment: {}, bag: [], questsDone: [], questLog: {}, timeBank: 0, lootLog: [], honorableKills: 0, pvpKills: 0, pvpDeaths: 0, pvpLog: [], pvpReadyAt: 0, hearthReadyAt: 0 })
+        const character = new Character({ ...c, characterXp: 0, zone: null, copper: 0, spells: undefined, talents: {}, equipment: {}, bag: [], questsDone: [], questLog: {}, timeBank: 0, lootLog: [], honorableKills: 0, honor: 0, honorToday: null, pvpKills: 0, pvpDeaths: 0, pvpLog: [], pvpReadyAt: 0, hearthReadyAt: 0 })
         const xp = Number(c.characterXp)
         if (Number.isFinite(xp) && xp > 0 && xp < character.xpToNextLevel) character.characterXp = xp
         if (!zoneLockReason(character, getZone(c.zone))) character.zone = c.zone

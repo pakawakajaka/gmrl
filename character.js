@@ -1,11 +1,12 @@
 import { CLASSES, MAX_LEVEL, MIN_LEVEL, NAME_PATTERN, RACES, ROLES, classIcon, xpToNextLevel } from './data.js'
 import { getZone } from './zones.js'
 import { averageItemLevel, characterPower } from './power.js'
-import { SLOTS, bestLoadout, getItem, getQuest, itemKey, levelToUse, questRewardsFor, rollMobLoot } from './gear.js'
+import { SLOTS, bestLoadout, getItem, getQuest, itemKey, levelToUse, offSpecGear, questRewardsFor, rollMobLoot, specOptions } from './gear.js'
 import { farmRates, questXp } from './combat.js'
 import { activeQuests, creditKill, nextAction, objectivesOf } from './quests.js'
 import { isClassSpell, startingSpells, trainSpells } from './spells.js'
 import { autoSpend, learnTalent, sanitizeTalents, talentPoints, unlearnTalent } from './talents.js'
+import { routeTravel } from './leveling.js'
 
 const lookup = (table, key) => (Object.hasOwn(table, key) ? table[key] : undefined)
 const BAG_SIZE = 16
@@ -14,7 +15,7 @@ const LOG_SIZE = 20
 export default class Character {
   #planned = null // the next action in the current zone, kept until there's time to do it
 
-  constructor({ id = crypto.randomUUID(), characterName, characterClass, characterSpec, characterRace, characterRole, characterLevel = MIN_LEVEL, characterXp = 0, zone = null, copper = 0, spells, talents, equipment = {}, bag = [], questsDone = [], questLog = {}, timeBank = 0, lootLog = [], honorableKills = 0, pvpKills = 0, pvpDeaths = 0, pvpLog = [], pvpReadyAt = 0, hearthReadyAt = 0 }) {
+  constructor({ id = crypto.randomUUID(), characterName, characterClass, characterSpec, characterRace, characterRole, characterLevel = MIN_LEVEL, characterXp = 0, zone = null, copper = 0, spells, talents, equipment = {}, bag = [], questsDone = [], questLog = {}, timeBank = 0, lootLog = [], honorableKills = 0, honor = 0, honorToday = null, pvpKills = 0, pvpDeaths = 0, pvpLog = [], pvpReadyAt = 0, hearthReadyAt = 0 }) {
     this.id = id
     this.characterName = Character.formatName(characterName)
     this.characterClass = characterClass
@@ -29,12 +30,14 @@ export default class Character {
     this.talents = talents ?? {} // { talent key: rank }; see talents.js
     if (!talents) autoSpend(this) // the spec's default build
     this.equipment = equipment // { slot: itemId }
-    this.bag = bag // item ids kept until the character is high enough level to wear them
+    this.bag = bag // item ids: the best gear for the character's other specs, then gear kept until it's high enough level
     this.questsDone = questsDone // quest ids
     this.questLog = questLog // { questId: [count per objective] } for quests with progress
     this.timeBank = timeBank // farmed seconds not yet spent on a kill or quest; below zero after world PvP
     this.lootLog = lootLog // newest first: { item, source, at, equipped, quest? }
-    this.honorableKills = honorableKills // players killed who weren't gray to the character
+    this.honorableKills = honorableKills // players killed for honor
+    this.honor = honor // honor points, unrounded
+    this.honorToday = honorToday // { day (UTC days since 1970), victims: { characterId: kills for honor } }
     this.pvpKills = pvpKills // all players killed
     this.pvpDeaths = pvpDeaths
     this.pvpLog = pvpLog // newest first: see worldPvp in pvp.js
@@ -90,16 +93,17 @@ export default class Character {
   // Farms for `hours`: one fight or quest turn-in after another, each taking its own time. Leftover time
   // carries over to the next call. Kills and quests pay XP, money and gear at the character's level when
   // they happen; the money buys new spell ranks as soon as they're affordable, and talent points from new
-  // levels go into the spec's default build. Returns the copper earned, levels gained and newly equipped
-  // item ids.
+  // levels go into the spec's default build. The character follows its race's leveling path (leveling.js)
+  // when it reaches a step's level or runs out of quests. Returns the copper earned, levels gained, newly
+  // equipped item ids and zone moves ({ from, to, reason, level }).
   farm(hours, now = Date.now()) {
-    const zone = getZone(this.zone)
-    if (!zone || hours <= 0) return { copper: 0, levels: 0, upgrades: [] }
+    if (!getZone(this.zone) || hours <= 0) return { copper: 0, levels: 0, upgrades: [], travels: [] }
 
     const wornBefore = new Set(Object.values(this.equipment))
     let levels = 0
     let copper = 0
     const acquired = []
+    const travels = []
     this.timeBank += hours * 3600
     for (;;) {
       const action = this.plannedAction
@@ -116,7 +120,7 @@ export default class Character {
       let xp
       if (action.fight) {
         const { entry, mob } = action.fight
-        creditKill(this, zone.name, entry)
+        creditKill(this, this.zone, entry)
         xp = action.fight.xp
         copper += action.fight.copper
         for (const item of rollMobLoot(entry)) {
@@ -137,10 +141,15 @@ export default class Character {
       acquired.push(...found)
       this.copper += action.fight ? action.fight.copper : (getQuest(action.questId).money ?? 0)
       trainSpells(this)
+      const move = (gained || !action.fight) && routeTravel(this, this.characterLevel - gained, !action.fight)
+      if (move) {
+        travels.push({ from: this.zone, to: move.zone, reason: move.reason, level: this.characterLevel })
+        this.zone = move.zone
+      }
     }
     const upgrades = [...new Set(Object.values(this.equipment))].filter((id) => !wornBefore.has(id))
     this.#log(acquired, upgrades, now)
-    return { copper, levels, upgrades }
+    return { copper, levels, upgrades, travels }
   }
 
   // Talent changes from the talent selector. Each returns false if not allowed.
@@ -166,6 +175,17 @@ export default class Character {
     autoSpend(this)
   }
 
+  // Switches to another spec (and role) of the class for free: respends talents on its default build and
+  // puts on its best gear, keeping the old spec's gear in the bag. Returns false if the class can't play it.
+  changeSpec(spec, role) {
+    if (!specOptions(this.characterClass).some((o) => o.spec === spec && o.role === role)) return false
+    this.characterSpec = spec
+    this.characterRole = role
+    this.useDefaultTalents()
+    this.equipBest()
+    return true
+  }
+
   // Adds XP, leveling up as many times as it covers. Returns the levels gained.
   #gainXp(xp) {
     if (!xp || this.characterLevel >= MAX_LEVEL) return 0
@@ -180,18 +200,21 @@ export default class Character {
     return levels
   }
 
-  // Puts on the best gear from what's worn, the bag and `newItems`. Keeps items that need a higher level
-  // in the bag; the rest is vendored. Returns the item ids that were newly put on.
+  // Puts on the best gear from what's worn, the bag and `newItems`. Keeps the best gear for the character's
+  // other specs and items that need a higher level in the bag; the rest is vendored. Returns the item ids
+  // that were newly put on.
   equipBest(newItems = []) {
     const before = new Set(Object.values(this.equipment))
     const owned = [...Object.values(this.equipment), ...this.bag, ...newItems]
     const { equipment, leftovers } = bestLoadout(this, owned)
     this.equipment = Object.fromEntries(Object.keys(SLOTS).filter((s) => equipment[s]).map((s) => [s, equipment[s]]))
     const worn = new Set(Object.values(this.equipment))
+    const offSpec = [...offSpecGear(this, owned).keys()].filter((id) => !worn.has(id))
     const waiting = (id) => !worn.has(id) && levelToUse(this, getItem(id)) > this.characterLevel && levelToUse(this, getItem(id)) < Infinity
-    this.bag = [...new Set(leftovers.filter(waiting))]
+    const later = [...new Set(leftovers.filter(waiting))]
       .sort((a, b) => getItem(b).itemLevel - getItem(a).itemLevel)
       .slice(0, BAG_SIZE)
+    this.bag = [...new Set([...offSpec, ...later])]
     return [...worn].filter((id) => !before.has(id))
   }
 
@@ -229,6 +252,11 @@ export default class Character {
       .map((e) => ({ item: itemKey(e.item), source: e.source.slice(0, 100), at: Number(e.at), equipped: e.equipped === true, ...(e.quest === true && { quest: true }) }))
     const count = (value) => Math.floor(fraction(value, Number.MAX_SAFE_INTEGER))
     this.honorableKills = count(data.honorableKills)
+    this.honor = fraction(data.honor, Number.MAX_SAFE_INTEGER)
+    const today = data.honorToday
+    this.honorToday = today && typeof today === 'object' && Number.isInteger(today.day) && today.victims && typeof today.victims === 'object'
+      ? { day: today.day, victims: Object.fromEntries(Object.entries(today.victims).filter(([id, n]) => id.length <= 64 && Number.isInteger(n) && n >= 1 && n <= 10).slice(0, 1000)) }
+      : null
     this.pvpKills = Math.max(count(data.pvpKills), this.honorableKills)
     this.pvpDeaths = count(data.pvpDeaths)
     this.pvpLog = (Array.isArray(data.pvpLog) ? data.pvpLog : [])
@@ -249,6 +277,7 @@ export default class Character {
         ...(Array.isArray(e.size) && { size: [0, 1].map((i) => Math.floor(fraction(e.size[i], 5)) || 1) }),
         ...(e.kills !== undefined && { kills: Math.floor(fraction(e.kills, 5)) }),
         ...(e.honor === true && { honor: true }),
+        ...(e.honor === true && e.points !== undefined && { points: fraction(e.points, 10000) }),
         ...(['ran', 'hid', 'hearth'].includes(e.fled) && { fled: e.fled }),
         ...(e.caught === true && { caught: true }),
       }))

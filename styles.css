@@ -1488,8 +1488,95 @@ main:has(.character-sheet) {
   text-decoration: line-through;
 }
 
+/* Leveling path: the step for the character's level in gold, the zone it's in now bold. */
+.route {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.route li {
+  padding: 0.1rem 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
+.route-level {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+
+.route .route-step {
+  border-color: #ffd100;
+  color: #ffd100;
+}
+
+.route .route-here {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.route .route-step.route-here {
+  color: #ffd100;
+}
+
+.path-mark {
+  margin-left: 0.4rem;
+  padding: 0 0.35rem;
+  border: 1px solid #ffd100;
+  border-radius: 999px;
+  color: #ffd100;
+  font-size: 0.7rem;
+  font-weight: 600;
+  vertical-align: middle;
+}
+
 .bag {
   grid-template-columns: repeat(auto-fill, 48px);
+}
+
+/* Bag, then recent loot, beside the questing panel. */
+.sheet-stack {
+  display: grid;
+  gap: 1.5rem;
+  align-content: start;
+}
+
+.bag-group + .bag-group {
+  margin-top: 0.75rem;
+}
+
+.bag-label {
+  margin: 0 0 0.35rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.bag-label.off-spec {
+  color: var(--accent);
+}
+
+.spec-picker {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.spec-picker select {
+  padding: 0.25rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font: inherit;
 }
 
 /* Paper doll and talents on top, PvP filling the rest of the column beside the stats. */

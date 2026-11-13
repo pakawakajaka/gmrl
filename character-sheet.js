@@ -1,11 +1,13 @@
 import { el, formatChance, formatDuration, formatNumber, money } from './dom.js'
-import { CLASS_BITS, INVENTORY_TYPES, QUALITIES, QUEST_ITEMS, RACE_BITS, SLOTS, getItem, getQuest, itemTypeName } from './gear.js'
+import { CLASS_BITS, INVENTORY_TYPES, QUALITIES, QUEST_ITEMS, RACE_BITS, SLOTS, getItem, getQuest, itemTypeName, offSpecGear } from './gear.js'
 import { SCHOOLS, STAT_NAMES, characterStats } from './stats.js'
 import { drinkFor, foodFor, getMob } from './combat.js'
 import { objectivesOf, questProgress } from './quests.js'
 import { mountOf } from './pvp.js'
 import { getSpell, knownAbilities } from './spells.js'
 import { renderTalentTile } from './talents-view.js'
+import { routeOf, routeZone } from './leveling.js'
+import { MAX_LEVEL } from './data.js'
 
 const LEFT = ['head', 'neck', 'shoulder', 'back', 'chest', 'shirt', 'tabard', 'wrist']
 const RIGHT = ['hands', 'waist', 'legs', 'feet', 'finger1', 'finger2', 'trinket1', 'trinket2']
@@ -43,7 +45,10 @@ export function renderCharacterSheet({ character, onDelete }) {
     ),
     el('div', { class: 'sheet-layout' },
       renderProgress(character),
-      renderBag(character),
+      el('div', { class: 'sheet-stack' },
+        renderBag(character),
+        renderLoot(character),
+      ),
     ),
     deleteDialog,
   )
@@ -235,11 +240,28 @@ function renderQuestLog(character) {
   }))
 }
 
+function renderRoute(character) {
+  const here = routeZone(character)
+  return [
+    el('h3', {}, 'Leveling Path'),
+    el('p', { class: 'note' }, `While farming below level ${MAX_LEVEL}, ${character.characterName} moves on at these levels or when a zone runs out of quests. Sending them elsewhere lasts until then.`),
+    el('ol', { class: 'route' }, routeOf(character).map(([level, zone]) =>
+      el('li', { class: [zone === here && 'route-step', zone === character.zone && 'route-here'].filter(Boolean).join(' ') || null },
+        el('span', { class: 'route-level' }, String(level)), ` ${zone}`))),
+  ]
+}
+
 function renderProgress(character) {
-  return el('section', { class: 'sheet-panel', 'aria-label': 'Quests and loot' },
+  return el('section', { class: 'sheet-panel', 'aria-label': 'Quests' },
     el('h3', {}, 'Questing'),
     el('p', {}, `${character.questsDone.length} quests completed. ${describeAction(character)}`),
     character.zone && renderQuestLog(character),
+    renderRoute(character),
+  )
+}
+
+function renderLoot(character) {
+  return el('section', { class: 'sheet-panel', 'aria-label': 'Recent loot' },
     el('h3', {}, 'Recent Loot'),
     character.lootLog.length
       ? el('ul', { class: 'loot-log' }, character.lootLog.map((entry) => {
@@ -265,15 +287,17 @@ function pvpDetail(e) {
       : e.caught ? `${e.fled === 'hid' ? 'Got found hiding' : 'Got chased down'}${chance ? `: ${chance} to win` : ''}.`
         : `${e.won === false ? 'Got ganked' : 'Got attacked'}${chance ? `: ${chance} to win` : ''}.`
   const brawl = e.size ? ` ${e.size[0]}v${e.size[1]} brawl, ${e.kills} kill${e.kills === 1 ? '' : 's'}.` : ''
-  return `${e.zone}${e.honor ? ', honorable kill' : ''}. ${start}${brawl}`
+  const honor = e.honor ? `, honorable kill${e.points !== undefined ? ` (${formatNumber(Math.floor(e.points))} honor)` : ''}` : ''
+  return `${e.zone}${honor}. ${start}${brawl}`
 }
 
 function renderPvp(character) {
-  const { honorableKills, pvpKills, pvpDeaths, pvpLog } = character
+  const { honorableKills, honor, pvpKills, pvpDeaths, pvpLog } = character
   const tally = (label, value) => el('div', {}, el('dt', {}, label), el('dd', {}, formatNumber(value)))
   return el('section', { class: 'sheet-panel sheet-pvp', 'aria-label': 'World PvP' },
     el('h3', {}, 'World PvP'),
     el('dl', { class: 'pvp-tally' },
+      tally('Honor', Math.floor(honor)),
       tally('Honorable Kills', honorableKills),
       tally('Kills', pvpKills),
       tally('Deaths', pvpDeaths),
@@ -294,18 +318,29 @@ function renderPvp(character) {
   )
 }
 
+// Bag items grouped by what they're kept for: each other spec's best gear, then gear for later levels.
 function renderBag(character) {
+  const offSpec = offSpecGear(character, [...Object.values(character.equipment), ...character.bag])
+  const groups = new Map()
+  for (const id of character.bag) {
+    const label = offSpec.has(id) ? `Off-spec: ${offSpec.get(id).join(', ')}` : 'For later levels'
+    groups.set(label, [...(groups.get(label) ?? []), id])
+  }
+  const order = [...groups.keys()].sort((a, b) => (a === 'For later levels') - (b === 'For later levels') || a.localeCompare(b))
   return el('section', { class: 'sheet-panel', 'aria-label': 'Bag' },
     el('h3', {}, 'Bag'),
-    el('p', { class: 'note' }, 'Gear saved for when the character is high enough level. Everything else is sold.'),
+    el('p', { class: 'note' }, 'The best gear for the character\'s other specs (switch specs on the ', el('a', { href: `#/character/${character.id}/talents` }, 'Talents'),
+      ' page) and gear saved for when it\'s high enough level. Everything else is sold.'),
     character.bag.length
-      ? el('ul', { class: 'bag' }, character.bag.map((id) => {
-        const item = getItem(id)
-        return el('li', { class: `slot slot-bottom q-${QUALITIES[item.quality]}`, tabindex: 0, 'aria-label': item.name },
-          renderIcon(item, item.name),
-          renderTooltip(item),
-        )
-      }))
+      ? order.map((label) => el('div', { class: 'bag-group' },
+        el('h4', { class: label === 'For later levels' ? 'bag-label' : 'bag-label off-spec' }, label),
+        el('ul', { class: 'bag' }, groups.get(label).map((id) => {
+          const item = getItem(id)
+          return el('li', { class: `slot slot-bottom q-${QUALITIES[item.quality]}`, tabindex: 0, 'aria-label': `${item.name} (${label})` },
+            renderIcon(item, item.name),
+            renderTooltip(item),
+          )
+        }))))
       : el('p', { class: 'empty' }, 'Empty.'),
   )
 }

@@ -2,6 +2,7 @@
 // to add a point, right-click (or Shift+click, or the - key) to take one back.
 import { el } from './dom.js'
 import { TALENTS } from './gear-data.js'
+import { specOptions } from './gear.js'
 import { POINTS_PER_ROW, canLearn, canUnlearn, defaultBuild, pointsSpent, talentPoints, talentSupport } from './talents.js'
 
 const ICON_URL = 'https://wow.zamimg.com/images/wow/icons/large/'
@@ -36,12 +37,14 @@ export function renderTalentTile(character) {
   )
 }
 
-export function renderTalents({ character, onLearn, onUnlearn, onReset, onDefault }) {
+export function renderTalents({ character, onLearn, onUnlearn, onReset, onDefault, onSpec }) {
   const cls = character.characterClass
   const total = talentPoints(character.characterLevel)
   const unspent = total - pointsSpent(character.talents)
   const defaults = defaultBuild(cls, character.characterSpec)
   const counts = treePoints(character)
+  const options = specOptions(cls)
+  const current = options.findIndex((o) => o.spec === character.characterSpec && o.role === character.characterRole)
   return el('section', { class: 'talents-view', style: { '--class-color': character.classColor }, 'aria-labelledby': 'view-title' },
     el('div', { class: 'view-header' },
       el('div', {},
@@ -51,13 +54,18 @@ export function renderTalents({ character, onLearn, onUnlearn, onReset, onDefaul
       ),
       el('div', { class: 'sheet-actions' },
         el('a', { class: 'button small', href: `#/character/${character.id}` }, 'Back to character'),
+        el('label', { class: 'spec-picker' }, 'Spec ',
+          el('select', {
+            'data-focus-key': 'talents-spec',
+            onchange: (event) => onSpec(options[Number(event.currentTarget.value)]),
+          }, options.map((o, i) => el('option', { value: String(i), selected: i === current }, o.label)))),
         el('button', { type: 'button', class: 'button small', 'data-focus-key': 'talents-default', onclick: onDefault }, 'Use default build'),
         el('button', { type: 'button', class: 'button small danger', 'data-focus-key': 'talents-reset', disabled: !pointsSpent(character.talents), onclick: onReset }, 'Reset'),
       ),
     ),
     el('p', { class: 'note talent-help' },
       el('span', { class: 'talent-legend' }), ` Gold ring: the ${character.characterSpec} default build (dashed until learned), which idle leveling spends new points on. `,
-      'Click a talent to add a point; right-click, Shift+click or press - to remove one. Changing talents is free.'),
+      'Click a talent to add a point; right-click, Shift+click or press - to remove one. Changing talents is free, and so is changing spec: it respends on the new spec\'s default build and swaps in its gear from the bag.'),
     el('div', { class: 'talent-trees' }, (TALENTS[cls] ?? []).map((tree, i) =>
       renderTree(character, tree, counts[i], defaults, unspent, onLearn, onUnlearn))),
   )

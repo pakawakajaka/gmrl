@@ -11,6 +11,8 @@ export const SORTS = {
   power: { label: 'Power level', compare: (a, b) => b.power.solo - a.power.solo },
   gold: { label: 'Gold', compare: (a, b) => b.copper - a.copper },
   dps: { label: 'DPS', compare: (a, b) => (b.rates?.dps ?? 0) - (a.rates?.dps ?? 0) },
+  honor: { label: 'Honor', compare: (a, b) => b.honor - a.honor },
+  hks: { label: 'Honorable kills', compare: (a, b) => b.honorableKills - a.honorableKills },
   class: { label: 'Class', compare: (a, b) => a.characterClass.localeCompare(b.characterClass) },
 }
 export const DEFAULT_SORT = 'name'

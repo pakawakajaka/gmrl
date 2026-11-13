@@ -1,7 +1,7 @@
 import { renderCharacterForm } from './character-form.js'
 import { renderCharacterSheet } from './character-sheet.js'
 import { MAX_LEVEL } from './data.js'
-import { el, formatChance, formatDuration, formatMoney, money } from './dom.js'
+import { el, formatChance, formatDuration, formatMoney, formatNumber, money } from './dom.js'
 import { renderFarm, updateFarm } from './farm.js'
 import { getItem } from './gear.js'
 import { renderRoster } from './roster.js'
@@ -50,6 +50,7 @@ function render() {
       onUnlearn: (key) => change(() => character.unlearnTalent(key)),
       onReset: () => change(() => character.resetTalents()),
       onDefault: () => change(() => character.useDefaultTalents()),
+      onSpec: ({ spec, role }) => change(() => character.changeSpec(spec, role)),
     }))
   } else if (character) {
     app.replaceChildren(renderCharacterSheet({ character, onDelete: handleDelete }))
@@ -130,6 +131,7 @@ function reportUpgrades(upgrades) {
 
 function reportFights(fights) {
   const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`
+  const points = (f) => `${formatNumber(Math.floor(f.points))} honor`
   for (const f of fights.slice(0, MAX_FIGHT_NOTICES)) {
     const e = encounterRecord(f, f.id)
     const who = (m) => [account.getCharacter(m.id) ? el('a', { href: `#/character/${m.id}` }, m.name) : m.name, ` (${m.level} ${m.class})`]
@@ -140,11 +142,11 @@ function reportFights(fights) {
     }
     const odds = ` Sized it up at ${formatChance(f.guess)}; really ${formatChance(f.odds)}.`
     if (f.kind === 'duel') {
-      notify(...headline(e, who), ` in ${f.zone}.${f.honor ? ' Honorable kill.' : ''}${odds}`, ...view)
+      notify(...headline(e, who), ` in ${f.zone}.${f.honor ? ` Honorable kill, ${points(f)}.` : ''}${odds}`, ...view)
     } else {
       const sizes = f.sides.map((s) => s.length).join('v')
       const result = f.winner === null ? 'nobody won' : `the ${f.sides[f.winner][0].faction} won`
-      const tolls = [f.dead.length && plural(f.dead.length, 'death'), f.honor && plural(f.honor, 'honorable kill')].filter(Boolean)
+      const tolls = [f.dead.length && plural(f.dead.length, 'death'), f.honor && `${plural(f.honor, 'honorable kill')} for ${points(f)}`].filter(Boolean)
       notify(...headline(e, who), ` in ${f.zone}. It turned into a ${sizes} brawl and ${result}${tolls.length ? ` (${tolls.join(', ')})` : ''}.`, ...view)
     }
   }
@@ -152,12 +154,24 @@ function reportFights(fights) {
   if (more > 0) notify(`…and ${more} more world PvP encounter${more === 1 ? '' : 's'}. See them on `, el('a', { href: '#/pvp' }, 'World PvP'), '.')
 }
 
+// One notice per character, for its latest move along its leveling path.
+function reportTravels(travels) {
+  const latest = new Map()
+  for (const t of travels) latest.set(t.character, { ...t, count: (latest.get(t.character)?.count ?? 0) + 1 })
+  for (const { character, from, to, reason, level, count } of latest.values()) {
+    const name = el('a', { href: `#/character/${character.id}` }, character.characterName)
+    const why = count > 1 ? ` followed its leveling path through ${count} zones` : reason === 'level' ? ` reached level ${level}` : ` finished the quests in ${from}`
+    notify(name, `${why} and moved on to ${to}.`)
+  }
+}
+
 function gameTick() {
-  const { levelUps, upgrades, fights } = account.tick()
+  const { levelUps, upgrades, fights, travels } = account.tick()
   reportLevelUps(levelUps)
+  reportTravels(travels)
   reportUpgrades(upgrades)
   reportFights(fights)
-  if (levelUps.length || upgrades.length || fights.length) {
+  if (levelUps.length || upgrades.length || fights.length || travels.length) {
     if (!app.querySelector('dialog[open]')) render() // don't close an open modal; the next render catches up
     save()
   } else if (currentView().view === 'farm') {
@@ -231,10 +245,12 @@ const away = account.tick()
 if (away.hours >= 1 / 60 && (away.copper >= 1 || away.levelUps.length || away.fights.length)) {
   reportFights(away.fights)
   reportUpgrades(away.upgrades)
+  reportTravels(away.travels)
   reportLevelUps(away.levelUps)
   const battles = away.fights.filter((f) => f.kind !== 'evade')
   const kills = battles.reduce((sum, f) => sum + f.honor, 0)
-  const fought = battles.length ? ` Your characters fought ${battles.length} time${battles.length === 1 ? '' : 's'} in contested zones (${kills} honorable kill${kills === 1 ? '' : 's'}).` : ''
+  const honor = battles.reduce((sum, f) => sum + f.points, 0)
+  const fought = battles.length ? ` Your characters fought ${battles.length} time${battles.length === 1 ? '' : 's'} in contested zones (${kills} honorable kill${kills === 1 ? '' : 's'}${kills ? `, ${formatNumber(Math.floor(honor))} honor` : ''}).` : ''
   notify(`Welcome back! While you were away for ${formatDuration(away.hours)}, your characters earned ${formatMoney(away.copper)}${away.upgrades.length ? ` and equipped ${away.upgrades.length} new item${away.upgrades.length === 1 ? '' : 's'}` : ''}.${fought}`)
   save()
 }

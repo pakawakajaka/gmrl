@@ -3,6 +3,7 @@ import { MAX_LEVEL } from './data.js'
 import { CONTINENTS, ZONES, getZone, zoneDifficulty, zoneLockReason } from './zones.js'
 import { farmRates } from './combat.js'
 import { renderSortControl, sortCharacters } from './sort.js'
+import { routeZone } from './leveling.js'
 
 export function renderFarm({ account, selectedId, sortKey, onSelect, onSort, onSend, onRecall }) {
   const selected = account.getCharacter(selectedId) ?? account.characters[0]
@@ -56,7 +57,7 @@ function renderFarmer(character, isSelected, onSelect, onRecall) {
         el('span', { class: 'farmer-level' }, `Level ${character.characterLevel} ${character.characterClass}`),
         el('span', { class: 'farmer-level' }, `Power level ${formatNumber(Math.round(character.power.solo))}`),
         (character.honorableKills > 0 || character.pvpDeaths > 0) && el('span', { class: 'farmer-level' },
-          `${formatNumber(character.honorableKills)} HK · ${formatNumber(character.pvpDeaths)} PvP death${character.pvpDeaths === 1 ? '' : 's'}`),
+          `${formatNumber(character.honorableKills)} HK · ${formatNumber(Math.floor(character.honor))} honor · ${formatNumber(character.pvpDeaths)} PvP death${character.pvpDeaths === 1 ? '' : 's'}`),
         el('span', { class: 'farmer-zone' }, character.zone ?? 'Idle',
           zone && el('span', { class: 'visually-hidden' }, ` (${difficulty} difficulty)`)),
       ),
@@ -115,7 +116,8 @@ function renderZoneTables(account, character, onSend, onRecall) {
           'Characters fight the mobs in their zone, simulated with their gear and the best rotation of the spells they have trained, ',
           'and they eat and drink back up after (free vendor food and water for their level; health, mana, armor and spirit regen set how long). Quests come first: they hunt whatever their quests need, ',
           'then grind anything they can beat. Rates here are for grinding; quest XP, gold and gear come on top. ',
-          'XP falls off as mobs drop below your level and stops once they turn gray; gold keeps coming.'),
+          'XP falls off as mobs drop below your level and stops once they turn gray; gold keeps coming. ',
+          `Farming characters below level ${MAX_LEVEL} follow their race's leveling path (the zone marked Path): they move on at set levels or when a zone runs out of quests. Sending one elsewhere lasts until then.`),
       )),
     el('div', { class: 'continents' }, CONTINENTS.map((continent) => el('section', { class: 'continent', 'aria-labelledby': `continent-${continent.replace(/\W/g, '')}` },
       el('h3', { id: `continent-${continent.replace(/\W/g, '')}` }, continent),
@@ -166,7 +168,9 @@ function renderZoneRow(account, character, zone, onSend, onRecall) {
   }
 
   return el('tr', { class: [isHere && 'current', lockReason && 'locked'].filter(Boolean).join(' ') || null },
-    el('th', { scope: 'row' }, zone.name),
+    el('th', { scope: 'row' }, zone.name, routeZone(character) === zone.name
+      ? el('span', { class: 'path-mark', title: `${character.characterRace} leveling path zone for level ${character.characterLevel}` }, 'Path')
+      : null),
     el('td', {}, badge(zone.faction)),
     el('td', { class: 'num' }, zone.minLevel === zone.maxLevel ? String(zone.minLevel) : `${zone.minLevel}–${zone.maxLevel}`),
     el('td', { class: `num${xpNote || !rates.beatable ? ' reduced' : ''}`, title: [fights, xpNote].filter(Boolean).join('. ') },

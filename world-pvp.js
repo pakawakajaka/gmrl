@@ -5,6 +5,7 @@ import { el, formatChance, formatDuration, formatNumber } from './dom.js'
 const factionOf = (m) => RACES[m.race].faction
 const sideOf = (e, side) => e.members.filter((m) => m.side === side)
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`
+const honorText = (points) => `${formatNumber(Math.floor(points))} honor`
 const ago = (at) => `${formatDuration((Date.now() - at) / 3600000)} ago`
 const clock = (seconds) => {
   const s = Math.round(seconds)
@@ -68,6 +69,7 @@ function renderList(account) {
       tally('Alliance wins', wins('Alliance')),
       tally('Horde wins', wins('Horde')),
       tally('Honorable kills', sum((m) => m.honor)),
+      tally('Honor', Math.floor(sum((m) => m.points ?? 0))),
       tally('Deaths', sum((m) => (m.out === 'died' ? 1 : 0))),
     ),
     encounters.length
@@ -82,7 +84,8 @@ function renderList(account) {
 function renderRow(e) {
   const deaths = e.members.filter((m) => m.out === 'died').length
   const honor = e.members.reduce((n, m) => n + m.honor, 0)
-  const extras = [deaths && plural(deaths, 'death'), honor && plural(honor, 'honorable kill')].filter(Boolean)
+  const points = e.members.reduce((n, m) => n + (m.points ?? 0), 0)
+  const extras = [deaths && plural(deaths, 'death'), honor && `${plural(honor, 'honorable kill')}${points ? ` (${honorText(points)})` : ''}`].filter(Boolean)
   return el('li', {},
     el('a', { class: `encounter-row ${resultClass(e)}`, href: `#/pvp/${e.id}` },
       el('span', { class: 'encounter-shape' }, shape(e)),
@@ -154,7 +157,7 @@ function renderMember(e, m, account) {
     : [
       m.joined > 0 && `Added at ${clock(m.joined)}`,
       m.out === 'died' ? `Died at ${clock(m.left)}` : m.out === 'escaped' ? `Bubble-hearthed at ${clock(m.left)}` : 'Survived',
-      m.kills > 0 && `${plural(m.kills, 'kill')}${m.honor ? ` (${m.honor} honorable)` : ''}`,
+      m.kills > 0 && `${plural(m.kills, 'kill')}${m.honor ? ` (${m.honor} honorable${m.points ? `, ${honorText(m.points)}` : ''})` : ''}`,
     ].filter(Boolean)
   return el('li', { class: `encounter-member${m.out === 'died' ? ' dead' : ''}`, style: { '--class-color': CLASSES[m.class].color } },
     el('img', { class: 'class-icon', src: classIcon(m.class), alt: '', width: 40, height: 40 }),

@@ -15,7 +15,7 @@ import { combatOf, restSeconds } from './combat.js'
 import { CLASSES, MAX_LEVEL, MIN_LEVEL, RACES } from './data.js'
 import { HEARTH_SECONDS, MAX_FIGHT_SECONDS, brawl, duelSim, variantsFor } from './sim.js'
 import { effectValue, getSpell, knownAbilities } from './spells.js'
-import { getZone, grayLevel } from './zones.js'
+import { getZone, grayLevel, zeroDifference } from './zones.js'
 
 const HOUR_MS = 3600 * 1000
 export const MEETS_PER_HOUR = 0.5 // how often two enemies farming the same zone come across each other
@@ -41,6 +41,13 @@ const BRAVADO = 0.8 // a fair fight looks like 69% to a bloodthirsty player
 const DRUNK = 1 // noise in the guess
 const ATTACK_AT = 0.4 // attacks when the guess is at least this
 const MAX_LEVELS_UP = 2 // never attacks an enemy more than this many levels above it
+
+// Classic 1.12 honor (vmangos Formulas.h GetHonorGain). Nobody here has a PvP rank, so every victim is
+// worth a rank 0 player's. Split evenly between the enemies credited with the kill.
+const HONOR_BASE = 188.3
+const HONOR_LEVEL_COEFF = [[60, 1], [50, 0.9545], [40, 0.5707], [30, 0.3434], [20, 0.207], [0, 0.1212]] // killer level, coefficient
+const SAME_VICTIM_KILLS = 10 // a day: each kill of the same player is worth 10% less, none after this many
+const DAY_MS = 24 * HOUR_MS
 
 // Getting away from a higher-level enemy, by hiding or running, whichever looks safer.
 const HIDE_SEEN = 0.4 // the chance an enemy who noticed spots a hiding player anyway
@@ -389,21 +396,55 @@ function replay(specs, roll) {
   return best
 }
 
+// Classic kill XP's level factor: +5% per level the victim is above the killer (up to +4), falling off
+// to nothing at gray.
+function honorLevelFactor(killerLevel, victimLevel) {
+  if (victimLevel >= killerLevel) return 1 + 0.05 * Math.min(victimLevel - killerLevel, 4)
+  if (victimLevel <= grayLevel(killerLevel)) return 0
+  const zd = zeroDifference(killerLevel)
+  return (zd + victimLevel - killerLevel) / zd
+}
+
+// Honor for one kill, before rounding. `sameVictimKills` is how many times the killer already got honor
+// for this victim today; `groupSize` how many enemies share the kill.
+export function honorGain(killerLevel, victimLevel, sameVictimKills = 0, groupSize = 1) {
+  if (sameVictimKills >= SAME_VICTIM_KILLS) return 0
+  const coeff = HONOR_LEVEL_COEFF.find(([level]) => killerLevel >= level)[1]
+  return (coeff * (1 - sameVictimKills / SAME_VICTIM_KILLS) * HONOR_BASE * honorLevelFactor(killerLevel, victimLevel)) / groupSize
+}
+
+// Books the honor for one kill. Like the game, a kill worth no honor isn't an honorable kill.
+function earnHonor(killer, victim, groupSize, at) {
+  const day = Math.floor(at / DAY_MS)
+  if (killer.honorToday?.day !== day) killer.honorToday = { day, victims: {} }
+  const { victims } = killer.honorToday
+  const honor = honorGain(killer.characterLevel, victim.characterLevel, victims[victim.id] ?? 0, groupSize)
+  if (honor > 0) victims[victim.id] = (victims[victim.id] ?? 0) + 1
+  return honor
+}
+
 // Books a fight's outcome for everyone in it (`parts`, attacker then victim then joiners). Each player
-// killed gives a kill to every enemy there when it fell. `combatLog` is the brawl's (see brawl).
+// killed gives a kill to every enemy there when it fell, and honor shared between them.
+// `combatLog` is the brawl's (see brawl).
 function settle(parts, winner, seconds, base, combatLog) {
   const { at, guess, caught } = base
   const group = parts.length > 2
   const size = [0, 1].map((s) => parts.filter((p) => p.side === s).length)
   const kills = parts.map(() => 0)
   const hks = parts.map(() => 0)
+  const points = parts.map(() => 0)
   for (const dead of parts) {
     if (dead.how !== 'died') continue
-    parts.forEach((p, i) => {
-      if (p.side === dead.side || p.joined > dead.left || (p.how && p.left < dead.left)) return
+    const credited = parts.filter((p) => p.side !== dead.side && p.joined <= dead.left && !(p.how && p.left < dead.left))
+    for (const p of credited) {
+      const i = parts.indexOf(p)
       kills[i] += 1
-      if (dead.c.characterLevel > grayLevel(p.c.characterLevel)) hks[i] += 1
-    })
+      const honor = earnHonor(p.c, dead.c, credited.length, at)
+      if (honor > 0) {
+        hks[i] += 1
+        points[i] += honor
+      }
+    }
   }
   parts.forEach((p, i) => {
     const { c } = p
@@ -414,6 +455,7 @@ function settle(parts, winner, seconds, base, combatLog) {
     if (p.how === 'died') c.pvpDeaths += 1
     c.pvpKills += kills[i]
     c.honorableKills += hks[i]
+    c.honor += points[i]
     const fled = p.how === 'escaped' ? 'hearth' : i === 1 ? caught : null
     log(c, p.foe, at, {
       attacked: i === 0,
@@ -422,7 +464,7 @@ function settle(parts, winner, seconds, base, combatLog) {
       ...(p.odds !== undefined && { odds: p.odds }),
       ...(i === 0 && { guess }),
       ...(group && { size: [size[p.side], size[1 - p.side]], kills: kills[i] }),
-      ...(hks[i] > 0 && { honor: true }),
+      ...(hks[i] > 0 && { honor: true, points: Math.round(points[i] * 100) / 100 }),
       ...(fled && { fled }),
       ...(i === 1 && caught && { caught: true }),
     })
@@ -437,7 +479,8 @@ function settle(parts, winner, seconds, base, combatLog) {
     dead: who((p) => p.how === 'died'),
     escaped: who((p) => p.how === 'escaped'),
     honor: hks.reduce((a, b) => a + b, 0),
-    members: parts.map((p, i) => ({ c: p.c, side: p.side, joined: p.joined, left: p.left, out: p.how, kills: kills[i], honor: hks[i], hp: p.hp, maxHp: p.maxHp })),
+    points: points.reduce((a, b) => a + b, 0),
+    members: parts.map((p, i) => ({ c: p.c, side: p.side, joined: p.joined, left: p.left, out: p.how, kills: kills[i], honor: hks[i], points: points[i], hp: p.hp, maxHp: p.maxHp })),
     log: combatLog,
   }
 }
@@ -482,8 +525,8 @@ export function encounterRecord(event, id) {
   const rows = (map) => [...map.values()].map(([a, amount, hits]) => [a, Math.round(amount), hits]).sort((x, y) => y[1] - x[1])
   const detail = (i) => ({ damage: rows(sums[i].damage), healing: rows(sums[i].healing), taken: Math.round(sums[i].taken) })
   const members = evade
-    ? [event.runner, event.chaser].map((c, side) => ({ ...player(c), side, joined: 0, left: 0, out: null, kills: 0, honor: 0, ...detail(side), hp: null, maxHp: null }))
-    : event.members.map((m, i) => ({ ...player(m.c), side: m.side, joined: m.joined, left: m.left, out: m.out, kills: m.kills, honor: m.honor, ...detail(i), hp: m.hp, maxHp: m.maxHp }))
+    ? [event.runner, event.chaser].map((c, side) => ({ ...player(c), side, joined: 0, left: 0, out: null, kills: 0, honor: 0, points: 0, ...detail(side), hp: null, maxHp: null }))
+    : event.members.map((m, i) => ({ ...player(m.c), side: m.side, joined: m.joined, left: m.left, out: m.out, kills: m.kills, honor: m.honor, points: Math.round(m.points * 100) / 100, ...detail(i), hp: m.hp, maxHp: m.maxHp }))
   return {
     id,
     kind: event.kind,
@@ -536,6 +579,7 @@ export function restoreEncounter(e) {
       out: ['died', 'escaped'].includes(m.out) ? m.out : null,
       kills: count(m.kills),
       honor: count(m.honor),
+      points: Number.isFinite(m.points) ? Math.min(Math.max(m.points, 0), 10000) : null, // null in records from before honor points
       damage: rows(m.damage),
       healing: rows(m.healing),
       taken: amount(m.taken),
