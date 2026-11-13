@@ -2,10 +2,12 @@
 // happens at its real time, and each one deals its average outcome after misses, dodges, parries,
 // glancing blows, crits, armor and resists. Formulas follow the CMaNGOS Classic server. Characters fight
 // with the spell ranks they've trained, the gear they wear and their class's rotation; each class tries
-// a few rotation variants and the fastest kill-and-recover cycle wins (see combat.js).
+// a few rotation variants and the fastest kill-and-recover cycle wins (see combat.js). Passive talents
+// change spells through kit.spell (see moddedSpell in talents.js) and stats through characterStats.
 import { CLASS_SPELLS, PETS } from './gear-data.js'
 import { characterStats, equippedItems } from './stats.js'
 import { effectValue, getSpell, knownAbilities } from './spells.js'
+import { moddedSpell, talentEffects } from './talents.js'
 
 export const MAX_FIGHT_SECONDS = 300
 const MELEE_RANGE = 5
@@ -46,6 +48,8 @@ const average = (w) => (w.min + w.max) / 2
 const rageConversion = (level) => 0.0091107836 * level * level + 3.225598133 * level + 4.2652911
 const armorFactor = (armor, attackerLevel) => 1 - Math.min(0.75, armor / (armor + 400 + 85 * attackerLevel))
 const levelPenalty = (spell) => (spell.spellLevel > 0 && spell.spellLevel < 20 ? 1 - (20 - spell.spellLevel) * 0.0375 : 1)
+const damageBonus = (spell) => 1 + (spell.dmgPct ?? 0) / 100 // talents on direct damage and healing
+const AUTO_SHOT = 75
 
 // A mob at `level` as the sim sees it.
 export function foeFor(mob, level) {
@@ -224,8 +228,8 @@ export function brawl(openers) {
 }
 
 // Player or pet attacking an NPC (CMaNGOS Unit::CalculateEffective*Chance). Chances are fractions; `mult`
-// is the expected damage of one attack relative to a normal hit.
-function attackTable({ skill, crit, hit = 0, level, cls }, mobLevel, { white = false, ranged = false, dualWield = false, onlyMiss = false } = {}) {
+// is the expected damage of one attack relative to a normal hit, with crits doing `critMult` times.
+function attackTable({ skill, crit, hit = 0, level, cls }, mobLevel, { white = false, ranged = false, dualWield = false, onlyMiss = false, critMult = 2 } = {}) {
   const d = mobLevel * 5 - skill
   let miss = 5 + (white && dualWield ? 19 : 0)
   miss += d > 10 ? 1 + (d - 10) * 0.6 : d * (d > 0 ? 0.1 : 0.04)
@@ -243,12 +247,12 @@ function attackTable({ skill, crit, hit = 0, level, cls }, mobLevel, { white = f
   }
   const critChance = clamp(crit + (skill - mobLevel * 5) * 0.2, 0, 100 - avoided - glance)
   const plain = 100 - avoided - glance - critChance
-  return { land: (100 - avoided) / 100, dodge: dodge / 100, crit: critChance / 100, mult: (plain + critChance * 2 + glance * glanceMult) / 100 }
+  return { land: (100 - avoided) / 100, dodge: dodge / 100, crit: critChance / 100, mult: (plain + critChance * critMult + glance * glanceMult) / 100 }
 }
 
 // Player or pet attacking a player (`victim` is its defenses): no glancing blows, and each point of skill
 // against defense is worth 0.04% both ways. `hitSize` is the average hit, for what a shield block takes off.
-function pvpAttackTable({ skill, crit, hit = 0, level }, victim, { white = false, ranged = false, dualWield = false, onlyMiss = false, hitSize } = {}) {
+function pvpAttackTable({ skill, crit, hit = 0, level }, victim, { white = false, ranged = false, dualWield = false, onlyMiss = false, hitSize, critMult = 2 } = {}) {
   const d = victim.defense - skill
   const miss = clamp(5 + (white && dualWield ? 19 : 0) + d * 0.04 - hit, d > 10 ? 1 : 0, 100)
   const dodge = onlyMiss ? 0 : clamp(victim.dodge + d * 0.04, 0, 100 - miss)
@@ -258,7 +262,7 @@ function pvpAttackTable({ skill, crit, hit = 0, level }, victim, { white = false
   const critChance = clamp(crit + (level * 5 - victim.defense) * 0.04, 0, 100 - avoided - block)
   const plain = 100 - avoided - block - critChance
   const blocked = block > 0 ? block * Math.max(0, 1 - victim.blockValue / hitSize) : 0
-  return { land: (100 - avoided) / 100, dodge: dodge / 100, crit: critChance / 100, mult: (plain + critChance * 2 + blocked) / 100 }
+  return { land: (100 - avoided) / 100, dodge: dodge / 100, crit: critChance / 100, mult: (plain + critChance * critMult + blocked) / 100 }
 }
 
 // Squared coefficient of variation of one attack's damage: missed, hit or crit, times the damage roll.
@@ -289,28 +293,35 @@ function defenseTable(defense, defender, mobLevel) {
 export function buildKit(character) {
   const cls = character.characterClass
   const level = character.characterLevel
-  const abilities = Object.fromEntries(Object.entries(knownAbilities(character)).map(([name, id]) => [name, getSpell(id)]))
+  // Spells as the character's talents change them, one copy per spell.
+  const { mods } = talentEffects(character)
+  const modded = new Map()
+  const spell = (id) => {
+    if (!modded.has(id)) modded.set(id, moddedSpell(getSpell(id), mods))
+    return modded.get(id)
+  }
+  const abilities = Object.fromEntries(Object.entries(knownAbilities(character)).map(([name, id]) => [name, spell(id)]))
   const buffs = {}
   const add = (key, value) => (buffs[key] = (buffs[key] ?? 0) + value)
   const itemArmor = equippedItems(character).reduce((sum, [, item]) => sum + (item.armor ?? 0), 0)
-  const kit = { cls, level, abilities, itemArmor, upkeep: [], regen: 0, chill: 0, thorns: null, innerFire: null, pet: null }
+  const kit = { cls, level, spell, abilities, itemArmor, upkeep: [], regen: 0, chill: 0, thorns: null, innerFire: null, pet: null }
   for (const group of PREBUFFS[cls] ?? []) {
     const name = group.find((n) => abilities[n])
     if (!name) continue
-    const spell = abilities[name]
-    kit.upkeep.push(spell)
-    for (const e of spell.effects) {
-      const value = effectValue(spell, e, level)
+    const buff = abilities[name]
+    kit.upkeep.push(buff)
+    for (const e of buff.effects) {
+      const value = effectValue(buff, e, level)
       if (e.aura === 22 && e.misc & 1) {
-        if (spell.charges) kit.innerFire = { armor: value, charges: spell.charges }
+        if (buff.charges) kit.innerFire = { armor: value, charges: buff.charges }
         else add('armor', value)
       } else if (e.aura === 29) STAT_KEYS.forEach((key, i) => (e.misc === -1 || (e.misc ?? 0) === i) && add(key, value))
       else if (e.aura === 99) add('attackPower', value)
       else if (e.aura === 124) add('rangedAttackPower', value)
-      else if (e.aura === 15) kit.thorns = { value, school: spell.school }
+      else if (e.aura === 15) kit.thorns = { value, school: buff.school }
       else if (e.aura === 161) kit.regen += value
       else if (e.aura === 42 && e.trigger) {
-        const proc = getSpell(e.trigger)
+        const proc = spell(e.trigger)
         const haste = proc?.effects.find((x) => x.aura === 138)
         if (haste) kit.chill = -effectValue(proc, haste, level)
       }
@@ -320,8 +331,9 @@ export function buildKit(character) {
   kit.stats = stats
   kit.wand = stats.ranged?.isWand ? stats.ranged : null
   const known = new Set(character.spells)
-  kit.heals = (HEALS[cls] ?? []).flatMap((name) => (CLASS_SPELLS[cls]?.[name] ?? []).filter(([id]) => known.has(id)).map(([id]) => getSpell(id)))
-  if (abilities['Lightning Shield']) kit.lightningShield = { spell: abilities['Lightning Shield'], proc: getSpell(abilities['Lightning Shield'].proc) }
+  kit.heals = (HEALS[cls] ?? []).flatMap((name) => (CLASS_SPELLS[cls]?.[name] ?? []).filter(([id]) => known.has(id)).map(([id]) => spell(id)))
+  if (abilities['Lightning Shield']) kit.lightningShield = { spell: abilities['Lightning Shield'], proc: spell(abilities['Lightning Shield'].proc) }
+  kit.autoShot = getSpell(AUTO_SHOT) && spell(AUTO_SHOT)
 
   if (cls === 'Hunter' && level >= PET_LEVEL) {
     const [hp, , armor, str, agi] = PETS.Hunter.levels[level - 1]
@@ -331,7 +343,7 @@ export function buildKit(character) {
     const [hp, , armor, , agi, , , , dmg] = PETS.Voidwalker.levels[level - 1]
     kit.pet = { tank: true, level, hp, armor: armor + 2 * agi, speed: PETS.Voidwalker.speed, hit: dmg * 1.25 }
   } else if (cls === 'Warlock') {
-    const firebolt = getSpell(PETS.Imp.spell)
+    const firebolt = spell(PETS.Imp.spell)
     kit.pet = { tank: false, level, firebolt, castTime: firebolt.cast / 1000 }
   }
   return kit
@@ -352,7 +364,7 @@ function formOf(kit, v) {
 // What a form's passive adds: { attackPower, health, armorPct } (armorPct on armor from items).
 function formBonus(kit, form) {
   const out = { attackPower: 0, health: 0, armorPct: 0 }
-  const passive = form?.passive && getSpell(form.passive)
+  const passive = form?.passive && kit.spell(form.passive)
   for (const e of passive?.effects ?? []) {
     const value = effectValue(passive, e, kit.level)
     if (e.aura === 99) out.attackPower += value
@@ -419,7 +431,7 @@ function fighter(kit, foe, v) {
   let hp = maxHp
   let mana = maxMana
   let rage = 0
-  let energy = 100
+  let energy = stats.energy
   let cp = 0
   let mobHp = foe.hp
   let dealt = 0
@@ -527,16 +539,19 @@ function fighter(kit, foe, v) {
   }
   // Spell miss chance by level difference: steeper against NPCs than players.
   const spellMiss = (diff) => (diff <= 2 ? 4 + diff : 6 + (diff - 2) * (pvp ? 7 : 11))
+  // Per school, or per spell for one with talent crit or hit mods (`s`).
   const spellTables = new Map()
-  function spellTable(school) {
-    if (spellTables.has(school)) return spellTables.get(school)
+  function spellTable(school, s) {
+    const key = s?.critBonus || s?.critDmgPct || s?.hitBonus ? s : school
+    if (spellTables.has(key)) return spellTables.get(key)
     const diff = foe.level - level
-    const miss = clamp(spellMiss(diff) - stats.spell.hit, 1, 100)
+    const miss = clamp(spellMiss(diff) - stats.spell.hit - (stats.spell.schoolHit[school] ?? 0) - (s?.hitBonus ?? 0), 1, 100)
     const land = 1 - miss / 100
-    const crit = stats.spell.crit / 100
+    const crit = clamp((stats.spell.crit + (stats.spell.schoolCrit[school] ?? 0) + (s?.critBonus ?? 0)) / 100, 0, 1)
+    const critExtra = 0.5 * (1 + (s?.critDmgPct ?? 0) / 100)
     const resist = resistFactor(school)
-    const table = { land, crit, mult: land * (1 + crit * 0.5) * resist, tick: land * resist }
-    spellTables.set(school, table)
+    const table = { land, crit, critExtra, mult: land * (1 + crit * critExtra) * resist, tick: land * resist }
+    spellTables.set(key, table)
     return table
   }
   const spellPower = (school) => (school > 0 ? stats.spell.damage + (stats.spell.schoolDamage[SCHOOL_NAMES[school]] ?? 0) : 0)
@@ -550,10 +565,15 @@ function fighter(kit, foe, v) {
     ? { min: (0.85 * level + attackPower / 14) * paws, max: (1.25 * level + attackPower / 14) * paws, speed: paws, base: [0.85 * level * paws, 1.25 * level * paws], subclass: -1 }
     : melee.mainHand
   const oh = form ? null : melee.offHand
-  const attacker = { skill: form ? level * 5 : melee.skill, crit: form ? melee.baseCrit : melee.crit, hit: melee.hit, level, cls }
+  const attacker = { skill: form ? level * 5 : melee.skill, crit: form ? melee.baseCrit + melee.formCrit : melee.crit, hit: melee.hit, level, cls }
   const hitTable = (who, opts) => (pvp ? pvpAttackTable(who, foe.player, opts) : attackTable(who, foe.level, opts))
   const ranged = stats.ranged && !stats.ranged.isWand ? stats.ranged : null
-  let whiteMh, whiteOh, yellow, overpower, rangedTable, wandTable, petTable, sealProc
+  const shooter = ranged && { skill: ranged.skill, crit: ranged.crit, hit: ranged.hit, level, cls }
+  // Talent physical damage done: with the worn weapon, or paws in a form.
+  const meleeMult = form ? melee.formDamageMult : melee.damageMult
+  const physicalMult = (s) => (s.school === 0 ? (s.dmgClass === 3 ? (ranged?.damageMult ?? 1) : meleeMult) : 1)
+  let whiteMh, whiteOh, yellow, overpower, rangedTable, autoTable, wandTable, petTable, sealProc
+  const modTables = new Map() // per spell with talent crit or hit mods
   const defense = defenseTable(stats.defenses, level, foe.level)
   const normalized = form ? paws : mh.subclass === 15 ? 1.7 : melee.twoHand ? 3.3 : 2.4
 
@@ -624,14 +644,15 @@ function fighter(kit, foe, v) {
     if (!wanding) {
       if (queued && canAfford(queued)) {
         const s = queued
+        const table = tableOf(s)
         spend(s)
         const bonus = s.effects.reduce((sum, e) => sum + ([17, 58].includes(e.type) ? effectValue(s, e, level) : 0), 0)
-        damageMob(s.name, (average(mh) + bonus) * yellow.mult * mobArmor, yellow.land)
-        trackDodges(yellow.dodge)
-        meleeLanded(yellow.land)
+        damageMob(s.name, (average(mh) + bonus) * table.mult * mobArmor * damageBonus(s) * meleeMult, table.land)
+        trackDodges(table.dodge)
+        meleeLanded(table.land)
         if (s.cooldown) cooldowns.set(cdKey(s), t + s.cooldown / 1000)
       } else {
-        const dmg = average(mh) * whiteMh.mult * mobArmor
+        const dmg = average(mh) * whiteMh.mult * mobArmor * meleeMult
         damageMob('Melee', dmg, whiteMh.land)
         gainRage((dmg * 7.5) / conversion)
         trackDodges(whiteMh.dodge)
@@ -648,7 +669,7 @@ function fighter(kit, foe, v) {
       ohEv = at(cast.end + EPS, ohSwing)
       return
     }
-    const dmg = average(oh) * whiteOh.mult * mobArmor
+    const dmg = average(oh) * whiteOh.mult * mobArmor * meleeMult
     damageMob('Melee', dmg, whiteOh.land)
     gainRage((dmg * 7.5) / conversion)
     trackDodges(whiteOh.dodge)
@@ -659,7 +680,7 @@ function fighter(kit, foe, v) {
   function autoShot() {
     autoEv = null
     if (playerInMelee()) return
-    damageMob('Auto Shot', (average(ranged) + (markBonus / 14) * ranged.speed) * rangedTable.mult * mobArmor)
+    damageMob('Auto Shot', (average(ranged) + (markBonus / 14) * ranged.speed) * autoTable.mult * mobArmor * ranged.damageMult)
     autoEv = at(t + ranged.speed, autoShot)
   }
   function wandShot() {
@@ -670,7 +691,7 @@ function fighter(kit, foe, v) {
       return
     }
     const school = kit.wand.school
-    damageMob('Shoot', average(kit.wand) * wandTable.mult * (school ? resistFactor(school) : mobArmor))
+    damageMob('Shoot', average(kit.wand) * wandTable.mult * (school ? resistFactor(school) : mobArmor) * kit.wand.damageMult)
     wandEv = at(t + kit.wand.speed, wandShot)
   }
   function setWanding(on) {
@@ -727,7 +748,7 @@ function fighter(kit, foe, v) {
       lsCharges -= used
       const proc = kit.lightningShield.proc
       const e = proc.effects[0]
-      damageMob('Lightning Shield', (effectValue(proc, e, level) + (e.coef ?? 0) * spellPower(proc.school) * levelPenalty(proc)) * spellTable(proc.school).mult * used, 0, from)
+      damageMob('Lightning Shield', (effectValue(proc, e, level) + (e.coef ?? 0) * spellPower(proc.school) * levelPenalty(proc)) * spellTable(proc.school, proc).mult * damageBonus(proc) * used, 0, from)
     }
     if (kit.thorns) damageMob('Thorns', kit.thorns.value * struck * resistFactor(kit.thorns.school), 0, from)
     if (ifCharges > 0) ifCharges = Math.max(0, ifCharges - struck)
@@ -757,8 +778,10 @@ function fighter(kit, foe, v) {
     whiteOh = oh && whiteMh
     yellow = hitTable(attacker, { hitSize: average(mh) })
     overpower = hitTable(attacker, { onlyMiss: true })
-    rangedTable = ranged && hitTable({ skill: ranged.skill, crit: ranged.crit, hit: melee.hit, level, cls }, { ranged: true, hitSize: average(ranged) })
-    wandTable = kit.wand && hitTable({ skill: kit.wand.skill, crit: kit.wand.crit, hit: melee.hit, level, cls }, { ranged: true })
+    rangedTable = ranged && hitTable(shooter, { ranged: true, hitSize: average(ranged) })
+    autoTable = ranged && (kit.autoShot?.critDmgPct ? hitTable(shooter, { ranged: true, hitSize: average(ranged), critMult: 2 + kit.autoShot.critDmgPct / 100 }) : rangedTable)
+    wandTable = kit.wand && hitTable({ skill: kit.wand.skill, crit: kit.wand.crit, hit: kit.wand.hit, level, cls }, { ranged: true })
+    modTables.clear()
     petTable = pet?.tank && hitTable({ skill: pet.level * 5, crit: 5, level: pet.level, cls: 'Pet' }, { white: true, hitSize: pet.hit })
     sealProc = sealBase * yellow.land * (1 + yellow.crit)
   }
@@ -786,12 +809,13 @@ function fighter(kit, foe, v) {
     const e = s.effects[0]
     const diff = foe.level - pet.level
     const land = 1 - clamp(spellMiss(diff), 1, 100) / 100
-    damageMob(`Imp ${s.name}`, effectValue(s, e, pet.level) * land * 1.025 * resistFactor(s.school))
+    damageMob(`Imp ${s.name}`, effectValue(s, e, pet.level) * land * 1.025 * resistFactor(s.school) * damageBonus(s))
     at(t + pet.castTime, impCast)
   }
 
   // ---- Casting ----
-  function pushback(land) {
+  function pushback(hit) {
+    const land = hit * (1 - Math.min(100, cast.spell.pushbackAvoid ?? 0) / 100)
     const step = PUSHBACK[Math.min(Math.floor(cast.hits), 4)] * land
     cast.hits += land
     cast.end = cast.channel ? Math.max(t, cast.end - step) : Math.min(cast.end + step, t + cast.total)
@@ -872,11 +896,11 @@ function fighter(kit, foe, v) {
 
   function channelTick(s, e) {
     if (e.aura === 23) {
-      const missile = getSpell(e.trigger)
+      const missile = kit.spell(e.trigger)
       const me = missile.effects[0]
-      damageMob(s.name, (effectValue(missile, me, level) + (me.coef ?? 0) * spellPower(missile.school) * levelPenalty(missile)) * spellTable(missile.school).mult)
+      damageMob(s.name, (effectValue(missile, me, level) + (me.coef ?? 0) * spellPower(missile.school) * levelPenalty(missile)) * tableOf(missile).mult * damageBonus(missile))
     } else if (e.aura === 53) {
-      const amount = (effectValue(s, e, level) + (e.coef ?? 0) * spellPower(s.school) * levelPenalty(s)) * spellTable(s.school).tick
+      const amount = (effectValue(s, e, level) + (e.coef ?? 0) * spellPower(s.school) * levelPenalty(s)) * spellTable(s.school).tick * (1 + (s.dotPct ?? 0) / 100)
       damageMob(s.name, amount)
       healed(self, amount, s.name)
     }
@@ -898,15 +922,29 @@ function fighter(kit, foe, v) {
   }
 
   const physicalTable = (s) => (s.name === 'Overpower' ? overpower : s.dmgClass === 3 ? rangedTable : yellow)
+  // The hit table for a spell or ability, with its talent crit and hit mods.
+  function tableOf(s) {
+    const physical = s.dmgClass === 2 || s.dmgClass === 3
+    if (!physical) return spellTable(s.school, s)
+    if (!s.critBonus && !s.critDmgPct && !s.hitBonus) return physicalTable(s)
+    if (!modTables.has(s)) {
+      const shot = s.dmgClass === 3 && ranged
+      const who = shot ? shooter : attacker
+      const opts = { ranged: !!shot, onlyMiss: s.name === 'Overpower', hitSize: average(shot ? ranged : mh), critMult: 2 + (s.critDmgPct ?? 0) / 100 }
+      modTables.set(s, hitTable({ ...who, crit: who.crit + (s.critBonus ?? 0), hit: who.hit + (s.hitBonus ?? 0) }, opts))
+    }
+    return modTables.get(s)
+  }
   const isFinisher = (s) => s.comboDuration || s.effects.some((e) => e.perCombo)
 
   // Applies a spell's effects when it lands.
   function resolve(s) {
     const physical = s.dmgClass === 2 || s.dmgClass === 3
-    const table = physical ? physicalTable(s) : spellTable(s.school)
+    const table = tableOf(s)
     const combo = isFinisher(s) ? cp : 0
     const bonus = (e) => (s.school > 0 ? (e.coef ?? 0) * spellPower(s.school) * levelPenalty(s) : 0) + (e.apCoef ?? 0) * attackPower
-    const armor = s.school === 0 ? mobArmor : resistFactor(s.school)
+    // Armor or resists, and talent damage bonuses.
+    const factor = (s.school === 0 ? mobArmor : resistFactor(s.school)) * damageBonus(s) * physicalMult(s)
     for (const e of s.effects) {
       const value = effectValue(s, e, level, combo)
       switch (e.type) {
@@ -917,12 +955,12 @@ function fighter(kit, foe, v) {
             amount += energy * (e.mult ?? 1) + attackPower * 0.03 * combo
             energy = 0
           }
-          damageMob(s.name, amount * table.mult * armor, s.melee ? table.land : 0)
+          damageMob(s.name, amount * table.mult * factor, s.melee ? table.land : 0)
           break
         }
         case 3:
           if (s.name === 'Execute') {
-            damageMob(s.name, (value + rage * 10 * (e.mult ?? 0)) * table.mult * mobArmor, table.land)
+            damageMob(s.name, (value + rage * 10 * (e.mult ?? 0)) * table.mult * factor, table.land)
             rage = 0
           } else if (s.name === 'Life Tap') mana = Math.min(maxMana, mana + value)
           break
@@ -930,7 +968,7 @@ function fighter(kit, foe, v) {
           const weapon = s.dmgClass === 3
             ? average(ranged) + (markBonus / 14) * ranged.speed
             : e.type === 121 ? (mh.base[0] + mh.base[1]) / 2 + (attackPower / 14) * normalized : average(mh)
-          damageMob(s.name, (weapon + value) * table.mult * mobArmor, s.melee ? table.land : 0)
+          damageMob(s.name, (weapon + value) * table.mult * factor, s.melee ? table.land : 0)
           if (s.melee) meleeLanded(table.land)
           if (s.melee || s.dmgClass === 2) trackDodges(table.dodge ?? 0)
           break
@@ -952,7 +990,7 @@ function fighter(kit, foe, v) {
 
   function applyAura(s, e, value, table, dotFactor) {
     switch (e.aura) {
-      case 3: addDot(s, e, value, dotFactor); break
+      case 3: addDot(s, e, value * (1 + (s.dotPct ?? 0) / 100) * physicalMult(s), dotFactor); break
       case 33: if (value < 0) applySlow((-value / 100) * table.land, s.duration / 1000); break
       case 69: absorb = value; break
       case 127: markBonus = value; onMob.set(s.name, { end: t + s.duration / 1000 }); break
@@ -970,7 +1008,8 @@ function fighter(kit, foe, v) {
   function heal(s) {
     const e = s.effects[0]
     const power = (s.proc ? getSpell(s.proc).effects[0].coef : (e.coef ?? 0)) * stats.spell.healing * levelPenalty(s)
-    return (effectValue(s, e, level) + power) * (1 + (stats.spell.crit / 100) * 0.5)
+    const crit = clamp((stats.spell.crit + (stats.spell.schoolCrit[s.school] ?? 0) + (s.critBonus ?? 0)) / 100, 0, 1)
+    return (effectValue(s, e, level) + power) * damageBonus(s) * (1 + crit * 0.5 * (1 + (s.critDmgPct ?? 0) / 100))
   }
   // Against a player, damage per second as the last few seconds felt.
   const recently = () => received * Math.exp(-(t - receivedAt) / RECENT_SECONDS)
@@ -1054,7 +1093,7 @@ function fighter(kit, foe, v) {
     Rogue() {
       if (v.snd && cp >= 1 && sndEnd <= t && lasts(6) && tryUse('Slice and Dice')) return true
       const evis = A.Eviscerate
-      const finishes = () => mobHp <= (effectValue(evis, evis.effects[0], level, cp) + attackPower * cp * 0.03) * yellow.mult * mobArmor
+      const finishes = () => mobHp <= (effectValue(evis, evis.effects[0], level, cp) + attackPower * cp * 0.03) * tableOf(evis).mult * mobArmor * damageBonus(evis) * meleeMult
       if (cp >= 1 && (cp >= 5 - EPS || finishes()) && tryUse('Eviscerate')) return true
       return cp < 5 - EPS && tryUse('Sinister Strike')
     },
@@ -1109,9 +1148,9 @@ function fighter(kit, foe, v) {
       if (v.judge && sealEnd > t && playerInMelee() && usable(judgement)) {
         const seal = A['Seal of Righteousness']
         return use(judgement, () => {
-          const jor = getSpell(seal.judgement)
+          const jor = kit.spell(seal.judgement)
           const e = jor.effects[0]
-          damageMob('Judgement', (effectValue(jor, e, level) + (e.coef ?? 0) * spellPower(1) * levelPenalty(jor)) * spellTable(1).mult)
+          damageMob('Judgement', (effectValue(jor, e, level) + (e.coef ?? 0) * spellPower(1) * levelPenalty(jor)) * spellTable(1, jor).mult * damageBonus(jor))
           sealEnd = -1
         })
       }
@@ -1160,7 +1199,7 @@ function fighter(kit, foe, v) {
       const share = Math.min(1, cycle / (bloodrage.cooldown / 1000))
       hp -= costOf(bloodrage) * share
       gainRage((effectValue(bloodrage, bloodrage.effects[0], level) / 10) * share)
-      const over = getSpell(bloodrage.effects.find((e) => e.trigger).trigger)
+      const over = kit.spell(bloodrage.effects.find((e) => e.trigger).trigger)
       const tick = over.effects[0]
       for (let k = 1; k <= over.duration / tick.period; k++) at((k * tick.period) / 1000, () => gainRage((effectValue(over, tick, level) / 10) * share))
     }
@@ -1191,11 +1230,11 @@ function fighter(kit, foe, v) {
   const usesEnergy = cls === 'Rogue' || cat
   function regenTick() {
     if (maxMana > 0) {
-      const perSecond = stats.spell.mp5 / 5 + (t - lastSpend >= FIVE_SECOND_RULE ? stats.spell.regen / 5 : 0)
+      const perSecond = stats.spell.mp5 / 5 + (stats.spell.regen / 5) * (t - lastSpend >= FIVE_SECOND_RULE ? 1 : stats.spell.castingRegen / 100)
       mana = Math.min(maxMana, mana + perSecond * REGEN_TICK)
     }
     gainHp((kit.regen + stats.hp5 / 5) * REGEN_TICK)
-    if (usesEnergy) energy = Math.min(100, energy + 20)
+    if (usesEnergy) energy = Math.min(stats.energy, energy + 20)
     at(t + REGEN_TICK, regenTick)
   }
   at(REGEN_TICK, regenTick)

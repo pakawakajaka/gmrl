@@ -312,7 +312,7 @@ function battle(attacker, victim, guess, at, here, random, caught = null) {
     const parts = one.members.map((m, i) => {
       const how = m.out?.how ?? null
       const recovery = how === 'died' ? d.death[i] : how === 'escaped' ? HEARTH_RETURN_SECONDS : restAfter(combatOf(pair[i]), m.handle.result())
-      return { c: pair[i], side: i, foe: pair[1 - i], joined: 0, travel: 0, left: m.out?.at ?? one.time, how, recovery, odds: i === 0 ? d.odds : 1 - d.odds }
+      return { c: pair[i], side: i, foe: pair[1 - i], joined: 0, travel: 0, left: m.out?.at ?? one.time, how, recovery, odds: i === 0 ? d.odds : 1 - d.odds, ...healthOf(m) }
     })
     // Bubbling out of a lost fight leaves it without a winner.
     const winner = parts.findIndex((p) => !p.how && parts[1 - p.side].how === 'died')
@@ -349,10 +349,13 @@ function battle(attacker, victim, guess, at, here, random, caught = null) {
     const how = m.out?.how ?? null
     const ctx = combatOf(c)
     const recovery = how === 'died' ? deathSeconds(ctx) : how === 'escaped' ? HEARTH_RETURN_SECONDS : restAfter(ctx, m.handle.result())
-    return { c, side: m.side, foe: chars[m.first.index], joined: m.offset, travel: travel[m.index], left: m.out?.at ?? b.time, how, recovery }
+    return { c, side: m.side, foe: chars[m.first.index], joined: m.offset, travel: travel[m.index], left: m.out?.at ?? b.time, how, recovery, ...healthOf(m) }
   })
   return settle(parts, winner, b.time, base, b.log)
 }
+
+// A brawl member's health when it ended: { hp, maxHp }.
+const healthOf = (m) => ({ hp: Math.round(Math.min(Math.max(m.handle.hp, 0), m.handle.maxHp)), maxHp: Math.round(m.handle.maxHp) })
 
 // Fights out a one-on-one between `specs` (attacker, victim) so it ends the way `roll` went: side 0 or 1
 // winning, or (null) nobody going down. Both play with their roll for luck; if that ends otherwise, the
@@ -434,7 +437,7 @@ function settle(parts, winner, seconds, base, combatLog) {
     dead: who((p) => p.how === 'died'),
     escaped: who((p) => p.how === 'escaped'),
     honor: hks.reduce((a, b) => a + b, 0),
-    members: parts.map((p, i) => ({ c: p.c, side: p.side, joined: p.joined, left: p.left, out: p.how, kills: kills[i], honor: hks[i] })),
+    members: parts.map((p, i) => ({ c: p.c, side: p.side, joined: p.joined, left: p.left, out: p.how, kills: kills[i], honor: hks[i], hp: p.hp, maxHp: p.maxHp })),
     log: combatLog,
   }
 }
@@ -443,7 +446,8 @@ function settle(parts, winner, seconds, base, combatLog) {
 // Side 0 is the attacker's (for a getaway, the runner's). `joined` and `left` are seconds into the fight;
 // `out` is 'died', 'escaped' or null. `abilities` names what was used and `schools` gives each one's spell
 // school (0 physical to 6 arcane); each member's `damage` and
-// `healing` are [ability, amount, hits] rows, most first, and `taken` its damage taken. `log` is the
+// `healing` are [ability, amount, hits] rows, most first, `taken` its damage taken, and `hp` and `maxHp`
+// its health when the fight ended (null for getaways). `log` is the
 // combat log, [tenths of a second, kind (see LOG_KINDS), from, to, ability, amount, extra, hp] with
 // `from` and `to` member indexes (see brawl), or null if it isn't kept.
 export function encounterRecord(event, id) {
@@ -478,8 +482,8 @@ export function encounterRecord(event, id) {
   const rows = (map) => [...map.values()].map(([a, amount, hits]) => [a, Math.round(amount), hits]).sort((x, y) => y[1] - x[1])
   const detail = (i) => ({ damage: rows(sums[i].damage), healing: rows(sums[i].healing), taken: Math.round(sums[i].taken) })
   const members = evade
-    ? [event.runner, event.chaser].map((c, side) => ({ ...player(c), side, joined: 0, left: 0, out: null, kills: 0, honor: 0, ...detail(side) }))
-    : event.members.map((m, i) => ({ ...player(m.c), side: m.side, joined: m.joined, left: m.left, out: m.out, kills: m.kills, honor: m.honor, ...detail(i) }))
+    ? [event.runner, event.chaser].map((c, side) => ({ ...player(c), side, joined: 0, left: 0, out: null, kills: 0, honor: 0, ...detail(side), hp: null, maxHp: null }))
+    : event.members.map((m, i) => ({ ...player(m.c), side: m.side, joined: m.joined, left: m.left, out: m.out, kills: m.kills, honor: m.honor, ...detail(i), hp: m.hp, maxHp: m.maxHp }))
   return {
     id,
     kind: event.kind,
@@ -518,6 +522,7 @@ export function restoreEncounter(e) {
     if (!Object.hasOwn(RACES, m.race) || !Object.hasOwn(CLASSES, m.class) || ![0, 1].includes(m.side)) return null
     const level = Number(m.level)
     if (!Number.isInteger(level) || level < MIN_LEVEL || level > MAX_LEVEL) return null
+    const maxHp = amount(m.maxHp) || null
     return {
       id: m.id,
       name: m.name.slice(0, 12),
@@ -534,6 +539,8 @@ export function restoreEncounter(e) {
       damage: rows(m.damage),
       healing: rows(m.healing),
       taken: amount(m.taken),
+      hp: maxHp && Math.min(amount(m.hp), maxHp),
+      maxHp,
     }
   })
   const sizes = [0, 1].map((s) => members.filter((m) => m?.side === s).length)

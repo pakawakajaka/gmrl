@@ -4,7 +4,8 @@ import { CLASS_SPELLS, SPELLS, STARTING_SPELLS } from './gear-data.js'
 
 export const getSpell = (id) => (Object.hasOwn(SPELLS, id) ? SPELLS[id] : undefined)
 
-// Average value of a spell effect for a caster of `level` (CMaNGOS Unit::CalculateSpellEffectValue).
+// Average value of a spell effect for a caster of `level` (CMaNGOS Unit::CalculateSpellEffectValue),
+// with talent modifiers (pct, flat; see moddedSpell in talents.js).
 export function effectValue(spell, effect, level, combo = 0) {
   let lvl = level
   if (spell.maxLevel && lvl > spell.maxLevel) lvl = spell.maxLevel
@@ -12,7 +13,8 @@ export function effectValue(spell, effect, level, combo = 0) {
   lvl -= spell.spellLevel ?? 0
   const dice = effect.dice ?? 0
   const top = (effect.sides ?? 0) + lvl * (effect.dicePerLevel ?? 0)
-  return effect.base + lvl * (effect.perLevel ?? 0) + (top > dice ? (dice + top) / 2 : dice) + combo * (effect.perCombo ?? 0)
+  const value = effect.base + lvl * (effect.perLevel ?? 0) + (top > dice ? (dice + top) / 2 : dice) + combo * (effect.perCombo ?? 0)
+  return value * (1 + (effect.pct ?? 0) / 100) + (effect.flat ?? 0)
 }
 
 // Spells a new character of the class knows.

@@ -5,6 +5,7 @@ import { MAX_LEVEL } from './data.js'
 import { MOBS, ZONE_MOBS } from './gear-data.js'
 import { characterPower } from './power.js'
 import { MAX_FIGHT_SECONDS, buildKit, foeFor, manaCost, simulate, variantsFor } from './sim.js'
+import { talentKey } from './talents.js'
 import { grayLevel, zeroDifference } from './zones.js'
 
 export const getMob = (entry) => (Object.hasOwn(MOBS, entry) ? MOBS[entry] : undefined)
@@ -74,10 +75,10 @@ export function questXp(level, quest) {
   return Math.round(quest.xp * (over <= 0 ? 1 : (QUEST_XP_FALLOFF[over] ?? 0.1)) * XP_RATE)
 }
 
-// Per-character fight numbers, rebuilt when level, gear or trained spells change.
+// Per-character fight numbers, rebuilt when level, gear, trained spells or talents change.
 const contexts = new WeakMap()
 export function combatOf(character) {
-  const key = `${character.characterLevel}|${Object.values(character.equipment).join()}|${character.spells.length}`
+  const key = `${character.characterLevel}|${Object.values(character.equipment).join()}|${character.spells.length}|${talentKey(character)}`
   let ctx = contexts.get(character)
   if (ctx?.key === key) return ctx
   const kit = buildKit(character)

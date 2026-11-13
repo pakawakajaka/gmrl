@@ -6,6 +6,10 @@
 //   pfq/units.lua, pfq/quests.lua, pfq/zones.lua, pfq/enUS/zones.lua   from pfQuest (github.com/shagu/pfQuest)
 //   v082/package/data/json/data.json   wow-classic-items@0.8.2 (npm), used for icons and tooltip text
 //   wowsims-classic.json   wowsims/classic assets/database/db.json (MIT), used for random "of the ..." suffix stats
+//                          and talent icons
+//   talents/<class>.json   wowsims/classic ui/core/talents/trees/<class>.json (MIT), talent tree layouts
+//   vmangos-spell.sql      the spell_template section of the vmangos world DB (github.com/brotalnia/database,
+//                          world_full_14_june_2021), used for talent tooltip text
 //
 // Output: only equippable items that drop from open-world mobs in this game's zones or are rewarded by
 // quests in those zones, their drop tables, those quests, and the player base stats per race/class/level.
@@ -714,6 +718,109 @@ const pets = {
 }
 buildSpell(3110)
 
+// ---- Talents ----
+// Trees from wowsims, rank spells from Spell.sql, tooltip text from the vmangos spell_template (best build <= 5875).
+const SPELL_FAMILY = { Mage: 3, Warrior: 4, Warlock: 5, Priest: 6, Druid: 7, Rogue: 8, Hunter: 9, Paladin: 10, Shaman: 11 }
+const spellIcons = new Map(JSON.parse(read('wowsims-classic.json')).spellIcons.map((s) => [s.id, s.icon]))
+const spellAffect = new Map(sqlRows(sql, 'spell_affect').map((r) => [`${r.entry}:${r.effectId}`, r.SpellFamilyMask]))
+const vmangos = new Map()
+for (const row of sqlRows(read('vmangos-spell.sql'), 'spell_template')) {
+  if (row.build <= 5875 && !(vmangos.get(row.entry)?.build > row.build)) vmangos.set(row.entry, row)
+}
+const RADIUS_YARDS = { 9: 20, 10: 30, 11: 45, 13: 10 }
+const TEXT_DURATION_MS = { ...DURATION_MS, 25: 180000, 65: 1500 }
+const split64 = (n) => [n % 2 ** 32, Math.floor(n / 2 ** 32)]
+const num = (n) => String(Math.round(n * 100) / 100)
+function describe(id) {
+  const own = vmangos.get(id)
+  if (!own) throw new Error(`No vmangos text for ${id}`)
+  const durationOf = (s) => {
+    const ms = TEXT_DURATION_MS[s.durationIndex]
+    if (ms === undefined) throw new Error(`Unknown duration index ${s.durationIndex} in ${id}`)
+    return ms
+  }
+  const time = (ms) => (ms >= 60000 ? `${num(ms / 60000)} min` : `${num(ms / 1000)} sec`)
+  const text = own.description.replace(/\$(?:([*/])(\d+);)?(\d*)([a-zA-Z])(\d?)/g, (token, op, by, ref, letter, k) => {
+    const s = ref ? vmangos.get(Number(ref)) : own
+    if (!s) throw new Error(`No vmangos text for ${ref} in ${id}`)
+    const value = (n) => s[`effectBasePoints${n}`] + s[`effectBaseDice${n}`]
+    let v
+    switch (letter.toLowerCase()) {
+      case 's': case 'm': v = Math.abs(value(k || 1)); break
+      case 'd': return time(durationOf(s))
+      case 'h': v = s.procChance; break
+      case 'n': v = s.procCharges; break
+      case 'u': v = s.stackAmount; break
+      case 'o': v = Math.abs(value(k || 1)) * (durationOf(s) / s[`effectAmplitude${k || 1}`]); break
+      case 't': v = s[`effectAmplitude${k || 1}`] / 1000; break
+      case 'b': v = s[`effectPointsPerComboPoint${k || 1}`]; break
+      case 'a': {
+        v = RADIUS_YARDS[s[`effectRadiusIndex${k || 1}`]]
+        if (v === undefined) throw new Error(`Unknown radius index in ${id}`)
+        break
+      }
+      case 'l': return token // plural, handled below
+      default: throw new Error(`Unknown token ${token} in ${id}`)
+    }
+    if (op === '/') v /= Number(by)
+    if (op === '*') v *= Number(by)
+    return num(v)
+  })
+  return text.replace(/\$l([^:;]*):([^;]*);/g, (_, one, many, at, whole) => {
+    const before = /(\d+(?:\.\d+)?)\D*$/.exec(whole.slice(0, at))
+    return before && Number(before[1]) === 1 ? one : many
+  })
+}
+const talents = {}
+for (const cls of Object.values(CLASS_NAMES)) {
+  const trees = JSON.parse(read(`talents/${cls.toLowerCase()}.json`))
+  const keys = new Set()
+  talents[cls] = trees.map((tree) => ({
+    name: tree.name,
+    talents: tree.talents.map((t) => {
+      if (keys.has(t.fieldName)) throw new Error(`Duplicate talent ${cls} ${t.fieldName}`)
+      keys.add(t.fieldName)
+      const first = spells.get(t.spellIds[0])
+      if (!first) throw new Error(`No spell ${t.spellIds[0]} for ${cls} ${t.fieldName}`)
+      const talent = {
+        key: t.fieldName, name: first.SpellName, icon: spellIcons.get(t.spellIds[0]) ?? 'inv_misc_questionmark',
+        row: t.location.rowIdx, col: t.location.colIdx, max: t.maxPoints,
+      }
+      if (t.prereqLocation) talent.prereq = [t.prereqLocation.rowIdx, t.prereqLocation.colIdx]
+      if (!(first.Attributes & 0x40)) talent.active = true
+      if (first.EquippedItemClass >= 0) talent.item = [first.EquippedItemClass, first.EquippedItemSubClassMask]
+      if (first.Stances) talent.forms = first.Stances
+      // wowsims lists fewer ids than ranks when the rest follow on from the last one.
+      const ids = [...t.spellIds]
+      while (ids.length < t.maxPoints) ids.push(ids.at(-1) + 1)
+      talent.ranks = ids.slice(0, t.maxPoints).map((id) => {
+        const s = spells.get(id)
+        if (!s) throw new Error(`No spell ${id} for ${cls} ${t.fieldName}`)
+        const effects = []
+        for (let k = 1; k <= 3; k++) {
+          if (!s[`Effect${k}`]) continue
+          const e = { type: s[`Effect${k}`], value: s[`EffectBasePoints${k}`] + s[`EffectBaseDice${k}`] }
+          if (s[`EffectApplyAuraName${k}`]) e.aura = s[`EffectApplyAuraName${k}`]
+          if (s[`EffectMiscValue${k}`]) e.misc = s[`EffectMiscValue${k}`]
+          if (s[`EffectTriggerSpell${k}`]) e.trigger = s[`EffectTriggerSpell${k}`]
+          if (e.aura === 107 || e.aura === 108) {
+            const mask = spellAffect.get(`${id}:${k - 1}`) ?? s[`EffectItemType${k}`]
+            e.mask = [s.SpellFamilyName || SPELL_FAMILY[cls], ...split64(mask)]
+          }
+          effects.push(e)
+        }
+        return { id, desc: describe(id), effects }
+      })
+      return talent
+    }),
+  }))
+}
+// Spell family masks so talent spell mods can find the spells they change.
+for (const [id, spell] of Object.entries(spellData)) {
+  const s = spells.get(Number(id))
+  if (s.SpellFamilyName && s.SpellFamilyFlags) spell.family = [s.SpellFamilyName, ...split64(s.SpellFamilyFlags)]
+}
+
 // ---- Output ----
 const items = {}
 for (const id of [...keptItems].sort((a, b) => a - b)) items[id] = buildItem(itemRows.get(id))
@@ -734,7 +841,7 @@ const suffixData = Object.fromEntries(Object.entries(suffixes).filter(([id]) => 
 const json = (value) => JSON.stringify(value)
 const out = `// Generated by tools/build-gear-data.mjs. Do not edit.
 // Source: CMaNGOS classic-db and mangos-classic (patch 1.12, GPL-2.0), pfQuest (MIT), wow-classic-items (MIT),
-// wowsims/classic random suffix stats (MIT).
+// wowsims/classic random suffix stats and talent trees (MIT), vmangos talent text (GPL-2.0).
 export const ITEMS = ${json(items)}
 export const SUFFIXES = ${json(suffixData)}
 export const SUFFIX_POOLS = ${json(suffixPools)}
@@ -751,6 +858,7 @@ export const SPELLS = ${json(spellData)}
 export const CLASS_SPELLS = ${json(classSpells)}
 export const STARTING_SPELLS = ${json(startingSpells)}
 export const PETS = ${json(pets)}
+export const TALENTS = ${json(talents)}
 `
 fs.writeFileSync(OUT, out)
 console.log(

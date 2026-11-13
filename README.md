@@ -11,7 +11,13 @@ Characters and guild memberships are saved in the browser's localStorage. On the
 
 ## Gear
 
-Characters farming a zone fight its real Classic mobs (see Mobs and quests) and roll each kill's real loot table. Quest rewards come on turn-in (the best choice reward is taken). The best usable gear for the character's spec is equipped automatically; items that need a higher level wait in the bag and the rest is sold. Clicking a character on the roster opens their character page, which shows the equipped items, Classic tooltips, stats and power. Characters can't be edited after creation; they can be deleted from their character page. Stats use Classic 1.12 formulas without talents or buffs. Random-enchant items ("of the Bear", "of Power", ...) drop from mobs and roll their suffix with the real Classic odds for that item. "of Regeneration" (health per 5 sec) is skipped because there's no source data for its values. Dungeon loot isn't included.
+Characters farming a zone fight its real Classic mobs (see Mobs and quests) and roll each kill's real loot table. Quest rewards come on turn-in (the best choice reward is taken). The best usable gear for the character's spec is equipped automatically; items that need a higher level wait in the bag and the rest is sold. Clicking a character on the roster opens their character page, which shows the equipped items, Classic tooltips, stats and power. Characters can't be edited after creation; they can be deleted from their character page. Stats use Classic 1.12 formulas and include passive talents but not buffs. Random-enchant items ("of the Bear", "of Power", ...) drop from mobs and roll their suffix with the real Classic odds for that item. "of Regeneration" (health per 5 sec) is skipped because there's no source data for its values. Dungeon loot isn't included.
+
+## Talents
+
+Characters get one talent point per level from 10 to 60 (51 total), using the real Classic trees (`talents.js`). Each spec has a default build. Points earned while leveling idly are spent along that build automatically. The Talents panel on the character page shows the current split and opens the talent selector (`#/character/<id>/talents`), where default-build talents are highlighted in gold. Click a talent to learn a rank; Shift+click or right-click removes one. "Use default build" and "Reset" respec for free. Once you change a build by hand, idle leveling keeps spending along the default order wherever it's still legal.
+
+The fights simulate passive talents that change stats, damage, crit, hit, costs, cast times, cooldowns and similar values. The tooltip on each talent shows whether it's simulated fully, partly or not at all. Active abilities granted by talents, proc effects (Flurry, Deep Wounds, ...), scripted talents (Anger Management, Ignite, ...) and pet talents aren't simulated yet.
 
 ## Power
 

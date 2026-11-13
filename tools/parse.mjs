@@ -2,7 +2,8 @@
 
 // Column names of `table` from its CREATE TABLE statement in a MySQL dump.
 function columnsOf(sql, table) {
-  const start = sql.indexOf(`CREATE TABLE \`${table}\``)
+  let start = sql.indexOf(`CREATE TABLE \`${table}\``)
+  if (start === -1) start = sql.indexOf(`CREATE TABLE IF NOT EXISTS \`${table}\``)
   if (start === -1) throw new Error(`No CREATE TABLE for ${table}`)
   const end = sql.indexOf(') ENGINE', start)
   return [...sql.slice(start, end).matchAll(/^\s+`(\w+)`/gm)].map((m) => m[1])
@@ -10,12 +11,18 @@ function columnsOf(sql, table) {
 
 // Rows of `table` from a MySQL dump's INSERT statements, as objects keyed by column name.
 export function sqlRows(sql, table) {
-  const columns = columnsOf(sql, table)
+  let columns = columnsOf(sql, table)
   const rows = []
-  const marker = `INSERT INTO \`${table}\` VALUES `
+  const marker = `INSERT INTO \`${table}\` `
   let at = sql.indexOf(marker)
   while (at !== -1) {
     let i = at + marker.length
+    if (sql[i] === '(') {
+      const end = sql.indexOf(')', i)
+      columns = [...sql.slice(i, end).matchAll(/`(\w+)`/g)].map((m) => m[1])
+      i = end + 1
+    }
+    i = sql.indexOf('VALUES', i) + 6
     for (;;) {
       while (sql[i] !== '(') i++
       i++
@@ -23,6 +30,7 @@ export function sqlRows(sql, table) {
       let col = 0
       for (;;) {
         let value
+        while (sql[i] === ' ') i++
         if (sql[i] === "'") {
           let text = ''
           let run = ++i

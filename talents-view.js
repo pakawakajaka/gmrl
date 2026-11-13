@@ -1,0 +1,132 @@
+// The talent selector: the class's three trees, with the spec's default build highlighted. Click a talent
+// to add a point, right-click (or Shift+click, or the - key) to take one back.
+import { el } from './dom.js'
+import { TALENTS } from './gear-data.js'
+import { POINTS_PER_ROW, canLearn, canUnlearn, defaultBuild, pointsSpent, talentPoints, talentSupport } from './talents.js'
+
+const ICON_URL = 'https://wow.zamimg.com/images/wow/icons/large/'
+const SUPPORT = {
+  full: 'Simulated in fights.',
+  partial: 'Partly simulated in fights.',
+  none: 'Not simulated in fights.',
+}
+
+// Points per tree, e.g. [31, 0, 20].
+export const treePoints = (character) =>
+  (TALENTS[character.characterClass] ?? []).map((tree) => tree.talents.reduce((sum, t) => sum + (character.talents[t.key] ?? 0), 0))
+
+// True if the character's talents are exactly its spec's default build so far (every spent point is a
+// default one).
+export function followsDefault(character) {
+  const build = defaultBuild(character.characterClass, character.characterSpec)
+  return Object.entries(character.talents).every(([key, rank]) => rank <= (build[key] ?? 0))
+}
+
+// Small summary tile for the character sheet.
+export function renderTalentTile(character) {
+  const total = talentPoints(character.characterLevel)
+  const unspent = total - pointsSpent(character.talents)
+  const href = `#/character/${character.id}/talents`
+  return el('section', { class: 'sheet-panel talent-tile', 'aria-labelledby': 'talent-tile-title' },
+    el('h3', { id: 'talent-tile-title' }, 'Talents'),
+    total
+      ? el('p', {}, `${treePoints(character).join(' / ')} · ${followsDefault(character) ? `${character.characterSpec} default build` : 'Custom build'}${unspent ? ` · ${unspent} unspent` : ''}`)
+      : el('p', { class: 'empty' }, 'Talent points start at level 10.'),
+    el('a', { class: 'button small', href }, 'Open talents'),
+  )
+}
+
+export function renderTalents({ character, onLearn, onUnlearn, onReset, onDefault }) {
+  const cls = character.characterClass
+  const total = talentPoints(character.characterLevel)
+  const unspent = total - pointsSpent(character.talents)
+  const defaults = defaultBuild(cls, character.characterSpec)
+  const counts = treePoints(character)
+  return el('section', { class: 'talents-view', style: { '--class-color': character.classColor }, 'aria-labelledby': 'view-title' },
+    el('div', { class: 'view-header' },
+      el('div', {},
+        el('h2', { id: 'view-title' }, `${character.characterName}'s Talents`),
+        el('p', { class: 'sheet-subtitle' }, `Level ${character.characterLevel} ${character.characterSpec} ${character.characterClass} · ${counts.join(' / ')} · `,
+          el('strong', { class: 'talent-points-left' }, `${unspent} point${unspent === 1 ? '' : 's'} left`)),
+      ),
+      el('div', { class: 'sheet-actions' },
+        el('a', { class: 'button small', href: `#/character/${character.id}` }, 'Back to character'),
+        el('button', { type: 'button', class: 'button small', 'data-focus-key': 'talents-default', onclick: onDefault }, 'Use default build'),
+        el('button', { type: 'button', class: 'button small danger', 'data-focus-key': 'talents-reset', disabled: !pointsSpent(character.talents), onclick: onReset }, 'Reset'),
+      ),
+    ),
+    el('p', { class: 'note talent-help' },
+      el('span', { class: 'talent-legend' }), ` Gold ring: the ${character.characterSpec} default build (dashed until learned), which idle leveling spends new points on. `,
+      'Click a talent to add a point; right-click, Shift+click or press - to remove one. Changing talents is free.'),
+    el('div', { class: 'talent-trees' }, (TALENTS[cls] ?? []).map((tree, i) =>
+      renderTree(character, tree, counts[i], defaults, unspent, onLearn, onUnlearn))),
+  )
+}
+
+function renderTree(character, tree, spent, defaults, unspent, onLearn, onUnlearn) {
+  const rows = Math.max(...tree.talents.map((t) => t.row)) + 1
+  const at = (row, col) => tree.talents.find((t) => t.row === row && t.col === col)
+  const arrows = tree.talents.filter((t) => t.prereq).map((t) => {
+    const [row, col] = t.prereq
+    const done = (character.talents[at(row, col)?.key] ?? 0) >= (at(row, col)?.max ?? 1)
+    const style = row === t.row
+      ? { 'grid-row': `${row + 1}`, 'grid-column': `${Math.min(col, t.col) + 1} / ${Math.max(col, t.col) + 2}` }
+      : { 'grid-row': `${row + 1} / ${t.row + 2}`, 'grid-column': `${col + 1}` }
+    const direction = row === t.row ? (t.col > col ? 'across right' : 'across left') : 'down'
+    return el('span', { class: `talent-arrow ${direction}${done ? ' met' : ''}`, style, 'aria-hidden': 'true' })
+  })
+  return el('section', { class: 'talent-tree', 'aria-label': `${tree.name}, ${spent} points` },
+    el('h3', {}, tree.name, el('span', { class: 'tree-points' }, ` ${spent}`)),
+    el('div', { class: 'talent-grid', style: { 'grid-template-rows': `repeat(${rows}, auto)` } },
+      arrows,
+      tree.talents.map((t) => renderTalent(character, t, tree, defaults[t.key] ?? 0, unspent, onLearn, onUnlearn)),
+    ),
+  )
+}
+
+function renderTalent(character, t, tree, defaultRank, unspent, onLearn, onUnlearn) {
+  const rank = character.talents[t.key] ?? 0
+  const learnable = canLearn(character, t.key)
+  const state = rank >= t.max ? 'maxed' : rank > 0 ? 'learned' : learnable ? 'available' : 'locked'
+  const remove = (event) => {
+    event.preventDefault()
+    if (canUnlearn(character, t.key)) onUnlearn(t.key)
+  }
+  const line = (text, cls) => el('p', { class: cls }, text)
+  const needs = []
+  const above = tree.talents.filter((o) => o.row < t.row).reduce((sum, o) => sum + (character.talents[o.key] ?? 0), 0)
+  if (above < t.row * POINTS_PER_ROW) needs.push(`Requires ${t.row * POINTS_PER_ROW} points in ${tree.name} Talents`)
+  const pre = t.prereq && tree.talents.find((o) => o.row === t.prereq[0] && o.col === t.prereq[1])
+  if (pre && (character.talents[pre.key] ?? 0) < pre.max) needs.push(`Requires ${pre.max} point${pre.max === 1 ? '' : 's'} in ${pre.name}`)
+  const tooltip = el('div', { class: 'tooltip', role: 'tooltip' },
+    line(t.name, 'tt-name'),
+    line(`Rank ${rank}/${t.max}`),
+    needs.map((n) => line(n, 'tt-requires')),
+    rank > 0 && line(t.ranks[rank - 1].desc, 'tt-desc'),
+    rank < t.max && [rank > 0 && line('Next rank:', 'tt-next'), line(t.ranks[rank].desc, 'tt-desc')],
+    defaultRank > 0 && line(`Default build: ${defaultRank}/${t.max}`, 'tt-default'),
+    line(SUPPORT[talentSupport(character.characterClass, t.key)], `tt-support support-${talentSupport(character.characterClass, t.key)}`),
+    learnable ? line('Click to learn', 'tt-hint') : !unspent && rank < t.max && line('No points left', 'tt-hint'),
+  )
+  const icon = el('span', { class: 'talent-icon', 'aria-hidden': 'true' }, el('span', { class: 'icon-fallback' }, t.name.charAt(0)))
+  const img = el('img', { src: `${ICON_URL}${encodeURIComponent(t.icon)}.jpg`, alt: '', width: 36, height: 36, loading: 'lazy', onerror: () => img.remove() })
+  icon.append(img)
+  return el('button', {
+    type: 'button',
+    class: `talent ${state}${defaultRank ? ' default' : ''}${t.col >= 2 ? ' tip-left' : ''}`,
+    style: { 'grid-row': `${t.row + 1}`, 'grid-column': `${t.col + 1}` },
+    'aria-label': `${t.name}, rank ${rank} of ${t.max}${defaultRank ? `, default build ${defaultRank}` : ''}`,
+    'aria-disabled': !learnable && !rank ? 'true' : null,
+    'data-focus-key': `talent-${t.key}`,
+    'data-talent': t.key,
+    onclick: (event) => (event.shiftKey ? remove(event) : learnable && onLearn(t.key)),
+    oncontextmenu: remove,
+    onkeydown: (event) => {
+      if (event.key === '-' || event.key === 'Delete' || event.key === 'Backspace') remove(event)
+    },
+  },
+  icon,
+  el('span', { class: 'talent-rank' }, `${rank}/${t.max}`),
+  tooltip,
+  )
+}

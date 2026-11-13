@@ -5,6 +5,7 @@ import { SLOTS, bestLoadout, getItem, getQuest, itemKey, levelToUse, questReward
 import { farmRates, questXp } from './combat.js'
 import { activeQuests, creditKill, nextAction, objectivesOf } from './quests.js'
 import { isClassSpell, startingSpells, trainSpells } from './spells.js'
+import { autoSpend, learnTalent, sanitizeTalents, talentPoints, unlearnTalent } from './talents.js'
 
 const lookup = (table, key) => (Object.hasOwn(table, key) ? table[key] : undefined)
 const BAG_SIZE = 16
@@ -13,7 +14,7 @@ const LOG_SIZE = 20
 export default class Character {
   #planned = null // the next action in the current zone, kept until there's time to do it
 
-  constructor({ id = crypto.randomUUID(), characterName, characterClass, characterSpec, characterRace, characterRole, characterLevel = MIN_LEVEL, characterXp = 0, zone = null, copper = 0, spells, equipment = {}, bag = [], questsDone = [], questLog = {}, timeBank = 0, lootLog = [], honorableKills = 0, pvpKills = 0, pvpDeaths = 0, pvpLog = [], pvpReadyAt = 0, hearthReadyAt = 0 }) {
+  constructor({ id = crypto.randomUUID(), characterName, characterClass, characterSpec, characterRace, characterRole, characterLevel = MIN_LEVEL, characterXp = 0, zone = null, copper = 0, spells, talents, equipment = {}, bag = [], questsDone = [], questLog = {}, timeBank = 0, lootLog = [], honorableKills = 0, pvpKills = 0, pvpDeaths = 0, pvpLog = [], pvpReadyAt = 0, hearthReadyAt = 0 }) {
     this.id = id
     this.characterName = Character.formatName(characterName)
     this.characterClass = characterClass
@@ -25,6 +26,8 @@ export default class Character {
     this.zone = zone // name of the zone being farmed, or null when idle
     this.copper = copper // the character's own money
     this.spells = spells ?? startingSpells(characterClass) // known class spell ids, every rank
+    this.talents = talents ?? {} // { talent key: rank }; see talents.js
+    if (!talents) autoSpend(this) // the spec's default build
     this.equipment = equipment // { slot: itemId }
     this.bag = bag // item ids kept until the character is high enough level to wear them
     this.questsDone = questsDone // quest ids
@@ -86,8 +89,9 @@ export default class Character {
 
   // Farms for `hours`: one fight or quest turn-in after another, each taking its own time. Leftover time
   // carries over to the next call. Kills and quests pay XP, money and gear at the character's level when
-  // they happen; the money buys new spell ranks as soon as they're affordable. Returns the copper earned,
-  // levels gained and newly equipped item ids.
+  // they happen; the money buys new spell ranks as soon as they're affordable, and talent points from new
+  // levels go into the spec's default build. Returns the copper earned, levels gained and newly equipped
+  // item ids.
   farm(hours, now = Date.now()) {
     const zone = getZone(this.zone)
     if (!zone || hours <= 0) return { copper: 0, levels: 0, upgrades: [] }
@@ -128,6 +132,7 @@ export default class Character {
       }
       const gained = this.#gainXp(xp)
       levels += gained
+      if (gained) autoSpend(this, talentPoints(this.characterLevel) - talentPoints(this.characterLevel - gained))
       if (found.length || gained) this.equipBest(found.map((a) => a.item))
       acquired.push(...found)
       this.copper += action.fight ? action.fight.copper : (getQuest(action.questId).money ?? 0)
@@ -136,6 +141,29 @@ export default class Character {
     const upgrades = [...new Set(Object.values(this.equipment))].filter((id) => !wornBefore.has(id))
     this.#log(acquired, upgrades, now)
     return { copper, levels, upgrades }
+  }
+
+  // Talent changes from the talent selector. Each returns false if not allowed.
+  learnTalent(key) {
+    this.#planned = null
+    return learnTalent(this, key)
+  }
+
+  unlearnTalent(key) {
+    this.#planned = null
+    return unlearnTalent(this, key)
+  }
+
+  // Takes every point back (talents are free to change).
+  resetTalents() {
+    this.#planned = null
+    this.talents = {}
+  }
+
+  // Respends all points on the spec's default build.
+  useDefaultTalents() {
+    this.resetTalents()
+    autoSpend(this)
   }
 
   // Adds XP, leveling up as many times as it covers. Returns the levels gained.
@@ -173,8 +201,8 @@ export default class Character {
     this.lootLog = [...entries.reverse(), ...this.lootLog].slice(0, LOG_SIZE)
   }
 
-  // Restores gear, money, spell, quest and PvP fields from untrusted saved data, dropping anything that
-  // doesn't exist.
+  // Restores gear, money, spell, talent, quest and PvP fields from untrusted saved data, dropping anything
+  // that doesn't exist. Talents that aren't a legal build (or saves from before talents) get the default.
   restoreGear(data) {
     const ids = (list) => (Array.isArray(list) ? list.map(itemKey).filter((key) => key !== undefined) : [])
     const fraction = (value, max) => (Number.isFinite(Number(value)) ? Math.min(Math.max(Number(value), 0), max) : 0)
@@ -182,6 +210,9 @@ export default class Character {
     this.copper = Math.floor(fraction(data.copper, Number.MAX_SAFE_INTEGER))
     const spells = Array.isArray(data.spells) ? data.spells.map(Number).filter((id) => isClassSpell(this.characterClass, id)) : []
     this.spells = [...new Set([...startingSpells(this.characterClass), ...spells])]
+    const talents = sanitizeTalents(this.characterClass, this.characterLevel, data.talents)
+    if (talents) this.talents = talents
+    else this.useDefaultTalents()
     this.questsDone = [...new Set(Array.isArray(data.questsDone) ? data.questsDone.map(Number).filter((id) => getQuest(id)) : [])]
     const done = new Set(this.questsDone)
     this.questLog = {}

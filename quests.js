@@ -2,6 +2,7 @@
 // crediting kills and quest-item drops.
 import { CLASS_BITS, QUESTS, RACE_BITS, ZONE_QUESTS, getQuest, questRewardsFor } from './gear.js'
 import { fightAgainst, pickGrindTarget } from './combat.js'
+import { talentKey } from './talents.js'
 import { grayLevel } from './zones.js'
 
 // Quests worked on at once. Kills count for every quest in the log that needs them.
@@ -65,10 +66,10 @@ function isAvailable(character, id, done, doneGroups) {
 }
 
 // Quest ids the character is working on in the zone, in the zone's quest order. Recomputed when level,
-// gear or completed quests change.
+// gear, talents or completed quests change.
 const activeCache = new WeakMap()
 export function activeQuests(character, zoneName) {
-  const key = `${zoneName}|${character.characterLevel}|${Object.values(character.equipment).join()}|${character.questsDone.length}`
+  const key = `${zoneName}|${character.characterLevel}|${Object.values(character.equipment).join()}|${character.questsDone.length}|${talentKey(character)}`
   const cached = activeCache.get(character)
   if (cached?.key === key) return cached.ids
   const done = new Set(character.questsDone)

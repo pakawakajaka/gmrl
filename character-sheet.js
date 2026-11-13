@@ -5,6 +5,7 @@ import { drinkFor, foodFor, getMob } from './combat.js'
 import { objectivesOf, questProgress } from './quests.js'
 import { mountOf } from './pvp.js'
 import { getSpell, knownAbilities } from './spells.js'
+import { renderTalentTile } from './talents-view.js'
 
 const LEFT = ['head', 'neck', 'shoulder', 'back', 'chest', 'shirt', 'tabard', 'wrist']
 const RIGHT = ['hands', 'waist', 'legs', 'feet', 'finger1', 'finger2', 'trinket1', 'trinket2']
@@ -35,6 +36,7 @@ export function renderCharacterSheet({ character, onDelete }) {
     el('div', { class: 'sheet-layout' },
       el('div', { class: 'sheet-column' },
         renderPaperDoll(character),
+        renderTalentTile(character),
         renderPvp(character),
       ),
       renderStats(character, stats),
@@ -163,7 +165,7 @@ function renderStats(character, s) {
       melee.offHand && ['Off Hand', damage(melee.offHand)],
       ['Speed', [melee.mainHand, melee.offHand].filter(Boolean).map((d) => d.speed.toFixed(2)).join(' / ')],
       ['DPS', melee.dps.toFixed(1)],
-      ['Attack Power', melee.attackPower],
+      ['Attack Power', Math.floor(melee.attackPower)],
       ['Crit Chance', pct(melee.crit)],
       ['Hit Bonus', pct(melee.hit)],
     ]),
@@ -171,7 +173,7 @@ function renderStats(character, s) {
       ['Damage', damage(ranged)],
       ['Speed', ranged.speed.toFixed(2)],
       ['DPS', ranged.dps.toFixed(1)],
-      !ranged.isWand && ['Attack Power', ranged.attackPower],
+      !ranged.isWand && ['Attack Power', Math.floor(ranged.attackPower)],
       !ranged.isWand && ['Crit Chance', pct(ranged.crit)],
     ]) : group('Ranged', ['Damage', 'Speed', 'DPS', 'Attack Power', 'Crit Chance'].map((label) => [label, '—'])),
     group('Spell', [
@@ -196,7 +198,7 @@ function renderStats(character, s) {
     group('Resistances', SCHOOLS.map((school) => [capitalize(school), s.resist[school]])),
     group('Trained Spells', Object.entries(knownAbilities(character)).map(([name, id]) => [name, `Rank ${getSpell(id).rank ?? 1}`])),
     el('span', { class: 'info-mark', tabindex: 0, 'aria-label': 'How these numbers work', 'aria-describedby': 'stats-note' }, '!',
-      el('span', { id: 'stats-note', class: 'tooltip', role: 'tooltip' }, 'Fights are simulated swing by swing and cast by cast, with the best rotation of the spells the character has trained and the gear it wears. After each fight the character eats and drinks back what they lost; health, mana, armor and spirit regen set how long that takes. Food and drink are the best vendor kind for their level, free. Each character keeps its own gold and buys new spell ranks as soon as it can afford them. Item level is the average of worn gear (empty slots count as 0). Farm rates are for grinding the current zone, before quest rewards. Stats are without talents or buffs.')),
+      el('span', { id: 'stats-note', class: 'tooltip', role: 'tooltip' }, 'Fights are simulated swing by swing and cast by cast, with the best rotation of the spells the character has trained and the gear it wears. After each fight the character eats and drinks back what they lost; health, mana, armor and spirit regen set how long that takes. Food and drink are the best vendor kind for their level, free. Each character keeps its own gold and buys new spell ranks as soon as it can afford them. Item level is the average of worn gear (empty slots count as 0). Farm rates are for grinding the current zone, before quest rewards. Stats include passive talents but not buffs.')),
   )
 }
 

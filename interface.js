@@ -6,6 +6,7 @@ import { renderFarm, updateFarm } from './farm.js'
 import { getItem } from './gear.js'
 import { renderRoster } from './roster.js'
 import { DEFAULT_SORT } from './sort.js'
+import { renderTalents } from './talents-view.js'
 import { createDefaultAccount, loadAccount, saveAccount, saveAccountToFile } from './storage.js'
 import { renderWorldPvp, headline } from './world-pvp.js'
 import { encounterRecord } from './pvp.js'
@@ -30,18 +31,27 @@ let farmSort = DEFAULT_SORT
 let lastSave = Date.now()
 
 function currentView() {
-  const [view, id] = location.hash.replace(/^#\/?/, '').split('/')
-  return { view, id }
+  const [view, id, sub] = location.hash.replace(/^#\/?/, '').split('/')
+  return { view, id, sub }
 }
 
 function render() {
-  const { view, id } = currentView()
+  const { view, id, sub } = currentView()
   const character = view === 'character' ? account.getCharacter(id) : undefined
   const focusKey = document.activeElement?.dataset?.focusKey
 
   document.getElementById('accountName').textContent = account.accountName
 
-  if (character) {
+  if (character && sub === 'talents') {
+    const change = (fn) => { fn(); save(); render() }
+    app.replaceChildren(renderTalents({
+      character,
+      onLearn: (key) => change(() => character.learnTalent(key)),
+      onUnlearn: (key) => change(() => character.unlearnTalent(key)),
+      onReset: () => change(() => character.resetTalents()),
+      onDefault: () => change(() => character.useDefaultTalents()),
+    }))
+  } else if (character) {
     app.replaceChildren(renderCharacterSheet({ character, onDelete: handleDelete }))
   } else if (view === 'create') {
     app.replaceChildren(renderCharacterForm({ account, onSave: handleSave }))

@@ -182,12 +182,17 @@ function timeline(e, who = (m) => m.name) {
   return events
 }
 
-// Who did what, like a Warcraft Logs meter: each member's damage, healing and damage taken, opening to
-// the abilities behind them.
+// Who did what, like a Warcraft Logs meter. Up top, each side's total damage and healing pulling against
+// the other's. Then each member's health when it ended, and its damage and healing on one scale shared by
+// the whole fight (the biggest number fills its bar), opening to the abilities behind them.
 function renderBreakdown(e) {
   const total = (rows) => rows.reduce((n, r) => n + r[1], 0)
-  const top = Math.max(1, ...e.members.map((m) => total(m.damage)))
-  const bar = (share, attrs) => el('span', { class: 'meter-bar', ...attrs }, el('span', { style: { width: `${(100 * share).toFixed(1)}%` } }))
+  const sums = e.members.map((m) => ({ damage: total(m.damage), healing: total(m.healing) }))
+  const top = Math.max(1, ...sums.flatMap((s) => [s.damage, s.healing]))
+  const anyHealing = sums.some((s) => s.healing > 0)
+  const factions = [0, 1].map((side) => factionOf(sideOf(e, side)[0]).toLowerCase())
+  const width = (share) => ({ width: `${(100 * Math.min(Math.max(share, 0), 1)).toFixed(1)}%` })
+  const bar = (share, attrs) => el('span', { class: 'meter-bar', 'aria-hidden': 'true', ...attrs }, el('span', { style: width(share) }))
   const abilityRows = (rows, of) => rows.map(([a, amount, hits]) =>
     el('tr', {},
       el('th', { scope: 'row' }, spell(e, a)),
@@ -198,20 +203,47 @@ function renderBreakdown(e) {
         bar(of ? amount / of : 0, { class: `meter-bar ${e.schools?.[a] == null ? '' : `school-${SCHOOLS[e.schools[a]]}`}` }),
         `${of ? Math.round((100 * amount) / of) : 0}%`)),
     ))
-  const member = (m) => {
-    const damage = total(m.damage)
-    const healing = total(m.healing)
+  // Side 0's total against side 1's, in faction colors.
+  const versus = (label, key) => {
+    const per = [0, 1].map((side) => e.members.reduce((n, m, i) => n + (m.side === side ? sums[i][key] : 0), 0))
+    if (!per[0] && !per[1]) return null
+    return el('div', { class: 'versus' },
+      el('div', { class: 'versus-labels' },
+        el('span', { class: `versus-${factions[0]}` }, formatNumber(per[0])),
+        el('span', { class: 'versus-title' }, label),
+        el('span', { class: `versus-${factions[1]}` }, formatNumber(per[1])),
+      ),
+      el('div', { class: 'versus-bar', 'aria-hidden': 'true' },
+        per.map((n, side) => el('span', { class: `versus-${factions[side]}`, style: { 'flex-grow': String(n) } }))),
+    )
+  }
+  // A labeled bar: what it is, the bar, and the number.
+  const stat = (label, share, kind, value) => el('div', { class: `stat-bar stat-${kind}` },
+    el('span', { class: 'stat-label' }, label),
+    bar(share, { class: `meter-bar meter-${kind}` }),
+    el('span', { class: 'stat-value' }, value),
+  )
+  const health = (m) => {
+    if (!m.maxHp) return null
+    const share = m.hp / m.maxHp
+    const level = share > 0.5 ? 'high' : share > 0.25 ? 'mid' : 'low'
+    const value = m.out === 'died' ? 'Dead' : `${formatNumber(m.hp)} / ${formatNumber(m.maxHp)}`
+    return stat('Health', m.out === 'died' ? 0 : share, `health hp-${level}`, value)
+  }
+  const member = (m, i) => {
+    const { damage, healing } = sums[i]
     const seconds = Math.max(m.left - m.joined, 1)
+    const fate = m.out === 'died' ? 'Died' : m.out === 'escaped' ? 'Hearthed out' : 'Survived'
     const head = (label) => el('tr', {}, el('th', { scope: 'col' }, label), ['Amount', 'Hits', 'Average', 'Share'].map((h) => el('th', { scope: 'col' }, h)))
-    return el('details', { class: 'encounter-breakdown', style: { '--class-color': CLASSES[m.class].color } },
+    return el('details', { class: `encounter-breakdown${m.out === 'died' ? ' dead' : ''}`, style: { '--class-color': CLASSES[m.class].color } },
       el('summary', {},
-        actor(m),
-        el('span', { class: 'encounter-meta' }, [
-          `${formatNumber(damage)} damage (${formatNumber(Math.round(damage / seconds))} DPS)`,
-          healing > 0 && `${formatNumber(healing)} healing`,
-          `${formatNumber(m.taken)} taken`,
-        ].filter(Boolean).join(' · ')),
-        bar(damage / top, { class: 'meter-bar meter-class' }),
+        el('span', { class: 'breakdown-head' }, actor(m), el('span', { class: `fate fate-${m.out ?? 'alive'}` }, fate)),
+        el('div', { class: 'stat-bars' },
+          health(m),
+          stat('Damage', damage / top, 'class', `${formatNumber(damage)} · ${formatNumber(Math.round(damage / seconds))} DPS`),
+          anyHealing && stat('Healing', healing / top, 'heal', `${formatNumber(healing)} · ${formatNumber(Math.round(healing / seconds))} HPS`),
+        ),
+        el('span', { class: 'encounter-meta' }, `${formatNumber(m.taken)} damage taken · show abilities`),
       ),
       el('table', { class: 'encounter-abilities' },
         m.damage.length > 0 && [el('thead', {}, head('Damage')), el('tbody', {}, abilityRows(m.damage, damage))],
@@ -221,8 +253,10 @@ function renderBreakdown(e) {
   }
   return el('section', { class: 'sheet-panel', 'aria-label': 'Damage breakdown' },
     el('h3', {}, 'Damage breakdown'),
+    el('div', { class: 'versus-group' }, versus('Damage', 'damage'), versus('Healing', 'healing')),
+    el('p', { class: 'note' }, 'Health is what each player had left when the fight ended. Damage and healing share one scale: the biggest number in the fight fills its bar.'),
     el('div', { class: 'encounter-sides' }, [0, 1].map((side) =>
-      el('div', { class: `faction-${factionOf(sideOf(e, side)[0]).toLowerCase()}` }, sideOf(e, side).map(member)))),
+      el('div', { class: `faction-${factions[side]}` }, e.members.map((m, i) => (m.side === side ? member(m, i) : null))))),
   )
 }
 

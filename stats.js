@@ -1,6 +1,7 @@
-// Classic (1.12) character stats from base stats, level, race and worn gear. Formulas follow CMaNGOS
-// StatSystem.cpp / Player.cpp / Unit.cpp. Talents and buffs aren't modeled.
+// Classic (1.12) character stats from base stats, level, race, worn gear and passive talents. Formulas
+// follow CMaNGOS StatSystem.cpp / Player.cpp / Unit.cpp. Buffs are up to the caller.
 import { BASE_HEALTH_MANA, BASE_STATS, PARRY_LEVEL, canBlock, getItem } from './gear.js'
+import { talentEffects } from './talents.js'
 
 export const STAT_NAMES = { str: 'Strength', agi: 'Agility', sta: 'Stamina', int: 'Intellect', spi: 'Spirit' }
 export const SCHOOLS = ['arcane', 'fire', 'nature', 'frost', 'shadow']
@@ -84,6 +85,19 @@ export function characterStats(character, buffs = {}) {
   const racial = RACIALS[race] ?? {}
   const worn = Object.fromEntries(equippedItems(character))
 
+  // Passive talent auras (see talentEffects). Ones limited to a weapon type count when it's worn; ones
+  // limited to shapeshift forms only count in the sim's forms (formCrit).
+  const auras = talentEffects(character).auras
+  const fits = (a, item) => !a.item || (item?.class === a.item[0] && (a.item[1] & (1 << item.subclass)) !== 0)
+  const talent = (aura, filter = () => true) => auras.filter((a) => a.aura === aura && !a.forms && filter(a))
+  const sum = (list) => list.reduce((total, a) => total + a.value, 0)
+  const product = (list) => list.reduce((total, a) => total * (1 + a.value / 100), 1)
+  const bySchool = (aura) => {
+    const out = {}
+    for (const a of talent(aura)) for (let school = 1; school < 7; school++) if (a.misc & (1 << school)) out[school] = (out[school] ?? 0) + a.value
+    return out
+  }
+
   const gear = { str: 0, agi: 0, sta: 0, int: 0, spi: 0, health: 0, mana: 0, armor: 0 }
   const bonus = {}
   const resist = Object.fromEntries(SCHOOLS.map((s) => [s, racial.resist?.[s] ?? 0]))
@@ -95,27 +109,37 @@ export function characterStats(character, buffs = {}) {
   }
   for (const key of ['str', 'agi', 'sta', 'int', 'spi', 'health', 'armor']) gear[key] += (bonus[key] ?? 0) + (buffs[key] ?? 0)
   for (const school of SCHOOLS) resist[school] += bonus[`${school}Resistance`] ?? 0
+  for (const a of [...talent(98), ...talent(30)]) {
+    const key = a.misc === 95 ? 'defense' : `skill${a.misc}`
+    bonus[key] = (bonus[key] ?? 0) + a.value
+  }
 
   const base = BASE_STATS[race][cls][level - 1]
   const pct = { int: racial.intPct ?? 0, spi: racial.spiPct ?? 0 }
+  const statKeys = ['str', 'agi', 'sta', 'int', 'spi']
+  for (const a of talent(137)) for (const [i, key] of statKeys.entries()) if (a.misc === -1 || a.misc === i) pct[key] = (pct[key] ?? 0) + a.value
   const stats = {}
-  for (const [i, key] of ['str', 'agi', 'sta', 'int', 'spi'].entries()) {
+  for (const [i, key] of statKeys.entries()) {
     stats[key] = { base: base[i], total: Math.trunc((base[i] + gear[key]) * (1 + (pct[key] ?? 0) / 100)) }
   }
   const { str, agi, sta, int, spi } = Object.fromEntries(Object.entries(stats).map(([k, v]) => [k, v.total]))
 
   const [baseHealth, baseMana] = BASE_HEALTH_MANA[cls][level - 1]
-  const health = Math.trunc((baseHealth + gear.health + healthFromStamina(sta)) * (1 + (racial.healthPct ?? 0) / 100))
-  const mana = baseMana > 0 ? baseMana + gear.mana + manaFromIntellect(int) : 0
-  const armor = gear.armor + agi * 2
+  const health = Math.trunc((baseHealth + gear.health + healthFromStamina(sta)) * (1 + (racial.healthPct ?? 0) / 100) * product(talent(133)))
+  const mana = baseMana > 0 ? Math.trunc((baseMana + gear.mana + manaFromIntellect(int)) * product(talent(132))) : 0
+  const armor = Math.trunc(gear.armor * product(talent(142)) + agi * 2 + (int * sum(talent(182))) / 100)
 
   const skillBonus = (item) => {
     const skill = item?.class === 2 ? WEAPON_SKILL[item.subclass] : undefined
     return skill ? (bonus[`skill${skill}`] ?? 0) + (racial.skills?.[skill] ?? 0) : 0
   }
-  const attackPower = Math.max(0, Math.trunc(meleeAttackPower(cls, level, str, agi))) + (bonus.attackPower ?? 0) + (buffs.attackPower ?? 0)
-  const rangedPower = Math.max(0, Math.trunc(rangedAttackPower(cls, level, agi))) + (bonus.rangedAttackPower ?? 0) + (buffs.rangedAttackPower ?? 0)
+  const powerPct = product(talent(166))
+  const attackPower = (Math.max(0, Math.trunc(meleeAttackPower(cls, level, str, agi))) + (bonus.attackPower ?? 0) + (buffs.attackPower ?? 0)) * powerPct
+  const rangedPower = (Math.max(0, Math.trunc(rangedAttackPower(cls, level, agi))) + (bonus.rangedAttackPower ?? 0) + (buffs.rangedAttackPower ?? 0)) * powerPct
   const agiCrit = agi / perLevel(CRIT_PER_AGI[cls], level)
+  const anyCrit = sum(talent(52, (a) => !a.item))
+  const anyHit = sum(talent(54, (a) => !a.item))
+  const physical = (item) => product(talent(79, (a) => (a.misc & 1) !== 0 && fits(a, item)))
 
   const weaponDamage = (item, power, scale = 1) => {
     const speed = item?.speed ?? BASE_ATTACK_TIME
@@ -125,15 +149,19 @@ export function characterStats(character, buffs = {}) {
   }
   const mainHand = worn.mainHand
   const offHand = worn.offHand?.class === 2 ? worn.offHand : undefined
+  const weapon = mainHand?.class === 2 ? mainHand : undefined
   const melee = {
-    mainHand: weaponDamage(mainHand?.class === 2 ? mainHand : undefined, attackPower),
-    offHand: offHand && weaponDamage(offHand, attackPower, 0.5),
+    mainHand: weaponDamage(weapon, attackPower),
+    offHand: offHand && weaponDamage(offHand, attackPower, 0.5 * product(talent(122))),
     attackPower,
-    crit: agiCrit + (bonus.crit ?? 0) + skillBonus(mainHand) * 0.04,
-    baseCrit: agiCrit + (bonus.crit ?? 0),
+    crit: agiCrit + (bonus.crit ?? 0) + skillBonus(mainHand) * 0.04 + sum(talent(52, (a) => fits(a, weapon))),
+    baseCrit: agiCrit + (bonus.crit ?? 0) + anyCrit,
+    formCrit: sum(auras.filter((a) => a.aura === 52 && a.forms)), // extra crit in druid forms
     skill: level * 5 + skillBonus(mainHand),
     twoHand: mainHand?.slot === 17,
-    hit: bonus.hit ?? 0,
+    hit: (bonus.hit ?? 0) + sum(talent(54, (a) => fits(a, weapon))),
+    damageMult: physical(weapon), // physical damage done with the worn weapon
+    formDamageMult: product(talent(79, (a) => (a.misc & 1) !== 0 && !a.item)),
   }
   melee.dps = [melee.mainHand, melee.offHand].filter(Boolean).reduce((sum, d) => sum + (d.min + d.max) / 2 / d.speed, 0)
 
@@ -146,9 +174,11 @@ export function characterStats(character, buffs = {}) {
       ...damage,
       dps: (damage.min + damage.max) / 2 / damage.speed,
       attackPower: rangedPower,
-      crit: agiCrit + (bonus.crit ?? 0) + skillBonus(rangedItem) * 0.04,
-      baseCrit: agiCrit + (bonus.crit ?? 0),
+      crit: agiCrit + (bonus.crit ?? 0) + skillBonus(rangedItem) * 0.04 + sum(talent(52, (a) => fits(a, rangedItem))),
+      baseCrit: agiCrit + (bonus.crit ?? 0) + anyCrit,
       skill: level * 5 + skillBonus(rangedItem),
+      hit: (bonus.hit ?? 0) + sum(talent(54, (a) => fits(a, rangedItem))),
+      damageMult: isWand ? product(talent(79, (a) => (a.misc & (1 << damage.school)) !== 0 && fits(a, rangedItem))) : physical(rangedItem),
       isWand,
     }
   }
@@ -160,22 +190,26 @@ export function characterStats(character, buffs = {}) {
   const defenses = {
     armor,
     defense,
-    dodge: BASE_DODGE[cls] + agi / perLevel(DODGE_PER_AGI[cls], level) + (bonus.dodge ?? 0) + (racial.dodge ?? 0) + fromDefense,
-    parry: level >= (PARRY_LEVEL[cls] ?? Infinity) ? 5 + (bonus.parry ?? 0) + fromDefense : 0,
-    block: blocks ? 5 + (bonus.block ?? 0) + fromDefense : 0,
-    blockValue: blocks ? Math.max(0, Math.trunc((shield.block ?? 0) + (bonus.blockValue ?? 0) + str / 20 - 1)) : 0,
+    dodge: BASE_DODGE[cls] + agi / perLevel(DODGE_PER_AGI[cls], level) + (bonus.dodge ?? 0) + (racial.dodge ?? 0) + fromDefense + sum(talent(49)),
+    parry: level >= (PARRY_LEVEL[cls] ?? Infinity) ? 5 + (bonus.parry ?? 0) + fromDefense + sum(talent(47)) : 0,
+    block: blocks ? 5 + (bonus.block ?? 0) + fromDefense + sum(talent(51)) : 0,
+    blockValue: blocks ? Math.max(0, Math.trunc(((shield.block ?? 0) + (bonus.blockValue ?? 0) + str / 20 - 1) * product(talent(150)))) : 0,
   }
 
   const [critBase, rate0, rate1] = SPELL_CRIT[cls] ?? [0, 0, 10]
   const spell = {
-    damage: bonus.spellDamage ?? 0,
+    damage: (bonus.spellDamage ?? 0) + Math.trunc((spi * sum(talent(174))) / 100),
     schoolDamage: Object.fromEntries(SCHOOLS.map((s) => [s, bonus[`${s}Damage`] ?? 0]).filter(([, v]) => v)),
-    healing: bonus.healing ?? 0,
-    crit: (SPELL_CRIT[cls] ? critBase + int / (rate0 + rate1 * level) : 0) + (bonus.spellCrit ?? 0),
+    healing: (bonus.healing ?? 0) + Math.trunc((spi * sum(talent(175))) / 100),
+    crit: (SPELL_CRIT[cls] ? critBase + int / (rate0 + rate1 * level) : 0) + (bonus.spellCrit ?? 0) + sum(talent(57)),
+    schoolCrit: bySchool(71), // { school index: extra crit }
     hit: bonus.spellHit ?? 0,
+    schoolHit: bySchool(55),
     regen: manaRegenPerSecond(cls, spi) * 5,
+    castingRegen: sum(talent(134)), // % of regen kept while casting
     mp5: bonus.mp5 ?? 0,
   }
 
-  return { stats, baseHealth, baseMana, health, mana, melee, ranged, defenses, spell, resist, hp5: bonus.hp5 ?? 0, healthRegen: healthRegenPerSecond(cls, spi) * 5 }
+  const energy = 100 + sum(talent(35, (a) => a.misc === 3))
+  return { stats, baseHealth, baseMana, health, mana, energy, melee, ranged, defenses, spell, resist, hp5: bonus.hp5 ?? 0, healthRegen: healthRegenPerSecond(cls, spi) * 5 }
 }
