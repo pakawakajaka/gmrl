@@ -8,6 +8,7 @@ import { getSpell, knownAbilities } from './spells.js'
 import { renderTalentTile } from './talents-view.js'
 import { routeOf, routeZone } from './leveling.js'
 import { MAX_LEVEL } from './data.js'
+import { DUNGEONS, dungeonLockReason, heldQuests, inRange, isQueuedFor, pendingQuests } from './dungeons.js'
 
 const LEFT = ['head', 'neck', 'shoulder', 'back', 'chest', 'shirt', 'tabard', 'wrist']
 const RIGHT = ['hands', 'waist', 'legs', 'feet', 'finger1', 'finger2', 'trinket1', 'trinket2']
@@ -21,7 +22,7 @@ const signed = (n) => `${n >= 0 ? '+' : ''}${n}`
 const pct = (n) => `${n.toFixed(2)}%`
 const ICON_URL = 'https://wow.zamimg.com/images/wow/icons/large/'
 
-export function renderCharacterSheet({ character, onDelete }) {
+export function renderCharacterSheet({ character, onDelete, onQueue, onLeaveQueue }) {
   const stats = characterStats(character)
   const deleteDialog = renderDeleteDialog(character, onDelete)
   return el('section', { class: 'character-sheet', style: { '--class-color': character.classColor }, 'aria-labelledby': 'view-title' },
@@ -46,6 +47,7 @@ export function renderCharacterSheet({ character, onDelete }) {
     el('div', { class: 'sheet-layout' },
       renderProgress(character),
       el('div', { class: 'sheet-stack' },
+        renderDungeons(character, onQueue, onLeaveQueue),
         renderBag(character),
         renderLoot(character),
       ),
@@ -212,6 +214,10 @@ function describeAction(character) {
   if (!character.zone) return 'Send this character to a zone to quest and collect loot.'
   const action = character.plannedAction
   if (!action) return `Nothing in ${character.zone} it can beat. Try an easier zone.`
+  if (action.errand) {
+    const where = action.errand.zone === null ? 'in town' : action.errand.zone === character.zone ? 'nearby' : `in ${action.errand.zone}`
+    return `Picking up dungeon quests ${where}: ${action.errand.quests.map((id) => `"${getQuest(id).title}"`).join(', ')}.`
+  }
   const title = action.questId && getQuest(action.questId).title
   if (!action.fight) return `Turning in "${title}".`
   const target = `${action.fight.mob.name} (level ${action.fight.level})`
@@ -257,6 +263,44 @@ function renderProgress(character) {
     el('p', {}, `${character.questsDone.length} quests completed. ${describeAction(character)}`),
     character.zone && renderQuestLog(character),
     renderRoute(character),
+  )
+}
+
+// Dungeon queue, quests held and a Queue button for every dungeon the character can enter: ones in its
+// level range first.
+function renderDungeons(character, onQueue, onLeaveQueue) {
+  const queue = character.dungeonQueue
+  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`
+  const pending = [...pendingQuests(character).entries()]
+  const toPickUp = pending.reduce((n, [, ids]) => n + ids.length, 0)
+  const enterable = DUNGEONS.filter((d) => !dungeonLockReason(character, d))
+    .sort((a, b) => inRange(character, b) - inRange(character, a) || b.level[0] - a.level[0])
+  const first = DUNGEONS.filter((d) => !d.faction || d.faction === character.faction).reduce((min, d) => Math.min(min, d.level[0]), MAX_LEVEL)
+  return el('section', { class: 'sheet-panel sheet-dungeons', 'aria-label': 'Dungeons' },
+    el('h3', {}, 'Dungeons'),
+    queue
+      ? el('p', { class: 'dungeon-status' },
+        `Queued${queue.manual ? ' by hand' : ''} for ${queue.dungeons.join(', ')} (${formatDuration((Date.now() - queue.since) / 3600000)}). `,
+        el('button', { type: 'button', class: 'button small', 'data-focus-key': 'leave-queue', onclick: () => onLeaveQueue?.() }, 'Leave queue'))
+      : el('p', { class: 'dungeon-status' }, 'Not queued.'),
+    toPickUp > 0 && el('p', { class: 'note' }, `${plural(toPickUp, 'dungeon quest')} to pick up (${pending.map(([zone, ids]) => `${ids.length} ${zone ?? 'in town'}`).join(', ')}) before it queues on its own.`),
+    character.timeBank < 0 && el('p', { class: 'note' }, `Back from a dungeon run: farming again in ${formatDuration(-character.timeBank / 3600)}.`),
+    enterable.length
+      ? el('ul', { class: 'dungeon-picks' }, enterable.map((d) => {
+        const held = heldQuests(character, d.name)
+        const clears = character.dungeonClears[d.name] ?? 0
+        return el('li', { class: inRange(character, d) ? 'in-range' : null },
+          el('div', { class: 'dungeon-pick-head' },
+            el('span', {}, el('strong', {}, d.name), ` ${d.level[0]}–${d.level[1]}`),
+            isQueuedFor(character, d.name)
+              ? el('span', { class: 'dungeon-queued' }, 'Queued')
+              : el('button', { type: 'button', class: 'button small', 'data-focus-key': `queue-${d.name}`, onclick: () => onQueue?.(d.name) }, 'Queue'),
+          ),
+          el('span', { class: 'encounter-meta' }, [`${plural(held.length, 'quest')} held`, clears && `cleared ${clears}×`].filter(Boolean).join(' · ')),
+          held.length > 0 && el('ul', { class: 'dungeon-quests' }, held.map((id) => el('li', {}, `[${getQuest(id).level}] ${getQuest(id).title}`))),
+        )
+      }))
+      : el('p', { class: 'empty' }, `No dungeons until level ${first}.`),
   )
 }
 

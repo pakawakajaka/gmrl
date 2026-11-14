@@ -7,15 +7,17 @@ import { activeQuests, creditKill, nextAction, objectivesOf } from './quests.js'
 import { isClassSpell, startingSpells, trainSpells } from './spells.js'
 import { autoSpend, learnTalent, sanitizeTalents, talentPoints, unlearnTalent } from './talents.js'
 import { routeTravel } from './leveling.js'
+import { canHold, getDungeon, dungeonLockReason, nextErrand, runErrand } from './dungeons.js'
 
 const lookup = (table, key) => (Object.hasOwn(table, key) ? table[key] : undefined)
 const BAG_SIZE = 16
 const LOG_SIZE = 20
+const MIN_TIME_BANK = -12 * 3600 // owed after a long dungeon run
 
 export default class Character {
   #planned = null // the next action in the current zone, kept until there's time to do it
 
-  constructor({ id = crypto.randomUUID(), characterName, characterClass, characterSpec, characterRace, characterRole, characterLevel = MIN_LEVEL, characterXp = 0, zone = null, copper = 0, spells, talents, equipment = {}, bag = [], questsDone = [], questLog = {}, timeBank = 0, lootLog = [], honorableKills = 0, honor = 0, honorToday = null, pvpKills = 0, pvpDeaths = 0, pvpLog = [], pvpReadyAt = 0, hearthReadyAt = 0 }) {
+  constructor({ id = crypto.randomUUID(), characterName, characterClass, characterSpec, characterRace, characterRole, characterLevel = MIN_LEVEL, characterXp = 0, zone = null, copper = 0, spells, talents, equipment = {}, bag = [], questsDone = [], questLog = {}, timeBank = 0, lootLog = [], honorableKills = 0, honor = 0, honorToday = null, pvpKills = 0, pvpDeaths = 0, pvpLog = [], pvpReadyAt = 0, hearthReadyAt = 0, dungeonQuests = [], dungeonQueue = null, dungeonClears = {}, queueDeclined = null }) {
     this.id = id
     this.characterName = Character.formatName(characterName)
     this.characterClass = characterClass
@@ -43,6 +45,10 @@ export default class Character {
     this.pvpLog = pvpLog // newest first: see worldPvp in pvp.js
     this.pvpReadyAt = pvpReadyAt // ms time until which the character neither spots nor is spotted
     this.hearthReadyAt = hearthReadyAt // ms time the Hearthstone is back
+    this.dungeonQuests = dungeonQuests // dungeon quest ids picked up and not yet turned in; see dungeons.js
+    this.dungeonQueue = dungeonQueue // { dungeon, since (ms), manual } while waiting for a group, else null
+    this.dungeonClears = dungeonClears // { dungeon name: successful runs }
+    this.queueDeclined = queueDeclined // { level, quests } when last taken out of the queue by hand
   }
 
   get xpToNextLevel() {
@@ -83,10 +89,11 @@ export default class Character {
     return this.zone ? activeQuests(this, this.zone) : []
   }
 
-  // What the character does next in its zone (see nextAction in quests.js), or undefined.
+  // What the character does next in its zone: a dungeon quest pickup trip (see nextErrand in dungeons.js),
+  // else see nextAction in quests.js. Undefined when there's nothing to do.
   get plannedAction() {
     if (!this.zone) return undefined
-    if (this.#planned?.zone !== this.zone) this.#planned = { zone: this.zone, action: nextAction(this, this.zone) }
+    if (this.#planned?.zone !== this.zone) this.#planned = { zone: this.zone, action: nextErrand(this) ?? nextAction(this, this.zone) }
     return this.#planned.action
   }
 
@@ -94,16 +101,21 @@ export default class Character {
   // carries over to the next call. Kills and quests pay XP, money and gear at the character's level when
   // they happen; the money buys new spell ranks as soon as they're affordable, and talent points from new
   // levels go into the spec's default build. The character follows its race's leveling path (leveling.js)
-  // when it reaches a step's level or runs out of quests. Returns the copper earned, levels gained, newly
-  // equipped item ids and zone moves ({ from, to, reason, level }).
+  // when it reaches a step's level or runs out of quests. Dungeon quest pickups for its level come first.
+  // Returns the copper earned, levels gained, newly equipped item ids, zone moves ({ from, to, reason, level })
+  // and pickup trips ({ zone, quests: dungeon quest ids picked up, steps: chain quests done }).
   farm(hours, now = Date.now()) {
-    if (!getZone(this.zone) || hours <= 0) return { copper: 0, levels: 0, upgrades: [], travels: [] }
+    if (!getZone(this.zone) || hours <= 0) {
+      if (hours > 0) this.timeBank = Math.min(0, this.timeBank + hours * 3600) // time owed for a dungeon run
+      return { copper: 0, levels: 0, upgrades: [], travels: [], errands: [] }
+    }
 
     const wornBefore = new Set(Object.values(this.equipment))
     let levels = 0
     let copper = 0
     const acquired = []
     const travels = []
+    const errands = []
     this.timeBank += hours * 3600
     for (;;) {
       const action = this.plannedAction
@@ -118,30 +130,39 @@ export default class Character {
 
       const found = []
       let xp
+      let earned
       if (action.fight) {
         const { entry, mob } = action.fight
         creditKill(this, this.zone, entry)
         xp = action.fight.xp
-        copper += action.fight.copper
+        earned = action.fight.copper
         for (const item of rollMobLoot(entry)) {
           if (levelToUse(this, getItem(item)) < Infinity) found.push({ item, source: mob.name })
         }
+      } else if (action.errand) {
+        const trip = runErrand(this, action.errand)
+        xp = trip.xp
+        earned = trip.copper
+        found.push(...trip.found)
+        errands.push({ zone: action.errand.zone, quests: trip.picked, steps: trip.steps })
       } else {
         const quest = getQuest(action.questId)
         this.questsDone.push(action.questId)
         delete this.questLog[action.questId]
         xp = questXp(this.characterLevel, quest)
-        copper += quest.money ?? 0
+        earned = quest.money ?? 0
         for (const item of questRewardsFor(this, quest)) found.push({ item, source: quest.title, quest: true })
       }
+      copper += earned
       const gained = this.#gainXp(xp)
       levels += gained
       if (gained) autoSpend(this, talentPoints(this.characterLevel) - talentPoints(this.characterLevel - gained))
       if (found.length || gained) this.equipBest(found.map((a) => a.item))
       acquired.push(...found)
-      this.copper += action.fight ? action.fight.copper : (getQuest(action.questId).money ?? 0)
+      this.copper += earned
       trainSpells(this)
-      const move = (gained || !action.fight) && routeTravel(this, this.characterLevel - gained, !action.fight)
+      const turnedIn = !action.fight && !action.errand
+      const move = (gained || turnedIn) && routeTravel(this, this.characterLevel - gained, turnedIn)
       if (move) {
         travels.push({ from: this.zone, to: move.zone, reason: move.reason, level: this.characterLevel })
         this.zone = move.zone
@@ -149,7 +170,37 @@ export default class Character {
     }
     const upgrades = [...new Set(Object.values(this.equipment))].filter((id) => !wornBefore.has(id))
     this.#log(acquired, upgrades, now)
-    return { copper, levels, upgrades, travels }
+    return { copper, levels, upgrades, travels, errands }
+  }
+
+  // Pays out the end of a dungeon run (see runDungeon in dungeons.js): the kills' XP and money, then turning in
+  // `quests`. Gear won in the run is already worn or bagged; `found` is only for the loot log. Returns
+  // { xp, questCopper, levels, upgrades (vs `wornBefore`), travel }.
+  finishDungeon({ xp, copper, found, quests, wornBefore }, now = Date.now()) {
+    const fromLevel = this.characterLevel
+    const acquired = [...found]
+    let questCopper = 0
+    let total = xp
+    for (const id of quests) {
+      const quest = getQuest(id)
+      this.questsDone.push(id)
+      total += questXp(this.characterLevel, quest)
+      questCopper += quest.money ?? 0
+      for (const item of questRewardsFor(this, quest)) acquired.push({ item, source: quest.title, quest: true })
+    }
+    this.dungeonQuests = this.dungeonQuests.filter((id) => !quests.includes(id))
+    const levels = this.#gainXp(total)
+    if (levels) autoSpend(this, talentPoints(this.characterLevel) - talentPoints(fromLevel))
+    this.equipBest(acquired.filter((a) => a.quest).map((a) => a.item))
+    this.copper += copper + questCopper
+    trainSpells(this)
+    const upgrades = [...new Set(Object.values(this.equipment))].filter((id) => !wornBefore.has(id))
+    this.#log(acquired, upgrades, now)
+    this.#planned = null
+    const move = levels > 0 && routeTravel(this, fromLevel, false)
+    const travel = move ? { from: this.zone, to: move.zone, reason: move.reason, level: this.characterLevel } : undefined
+    if (move) this.zone = move.zone
+    return { xp: total, questCopper, levels, upgrades, travel }
   }
 
   // Talent changes from the talent selector. Each returns false if not allowed.
@@ -245,7 +296,7 @@ export default class Character {
       const objectives = objectivesOf(id)
       if (counts.length === objectives.length) this.questLog[id] = objectives.map((o, i) => Math.floor(fraction(counts[i], o.count)))
     }
-    this.timeBank = Number.isFinite(Number(data.timeBank)) ? Math.min(Math.max(Number(data.timeBank), -3600), 3600) : 0
+    this.timeBank = Number.isFinite(Number(data.timeBank)) ? Math.min(Math.max(Number(data.timeBank), MIN_TIME_BANK), 3600) : 0
     this.lootLog = (Array.isArray(data.lootLog) ? data.lootLog : [])
       .filter((e) => e && itemKey(e.item) !== undefined && typeof e.source === 'string' && Number.isFinite(Number(e.at)))
       .slice(0, LOG_SIZE)
@@ -284,6 +335,18 @@ export default class Character {
     const later = (value) => fraction(value, Date.now() + 24 * 3600 * 1000)
     this.pvpReadyAt = later(data.pvpReadyAt)
     this.hearthReadyAt = later(data.hearthReadyAt)
+    this.dungeonQuests = [...new Set(Array.isArray(data.dungeonQuests) ? data.dungeonQuests.map(Number).filter((id) => canHold(this, id) && !done.has(id)) : [])]
+    const clears = data.dungeonClears && typeof data.dungeonClears === 'object' ? data.dungeonClears : {}
+    this.dungeonClears = Object.fromEntries(Object.entries(clears).filter(([name]) => getDungeon(name)).map(([name, n]) => [name, count(n)]).filter(([, n]) => n > 0))
+    const queue = data.dungeonQueue
+    const queued = Array.isArray(queue?.dungeons) ? [...new Set(queue.dungeons)].filter((name) => typeof name === 'string' && !dungeonLockReason(this, getDungeon(name))) : []
+    this.dungeonQueue = queued.length
+      ? { dungeons: queued, since: fraction(queue.since, Date.now()), manual: queue.manual === true }
+      : null
+    const declined = data.queueDeclined
+    this.queueDeclined = declined && typeof declined === 'object' && Number.isInteger(declined.level) && Number.isInteger(declined.quests)
+      ? { level: declined.level, quests: declined.quests }
+      : null
     this.equipment = {}
     this.bag = []
     this.equipBest([...ids(equipped), ...ids(data.bag)])

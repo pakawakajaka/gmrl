@@ -3,6 +3,7 @@ import Guild from './guild.js'
 import { MIN_LEVEL, defaultSpec } from './data.js'
 import { getZone, zoneLockReason } from './zones.js'
 import { encounterRecord, restoreEncounter, worldPvp } from './pvp.js'
+import { RUN_LOG_SIZE, autoQueue, formGroups, joinQueue, leaveQueue, restoreRun } from './dungeons.js'
 
 const ID_PATTERN = /^[\w-]+$/
 const MS_PER_HOUR = 3600 * 1000
@@ -17,13 +18,14 @@ function trimLogs(encounters) {
 
 export default class Account {
   // `gold` (copper) is old account-wide money from before characters kept their own; it's split evenly.
-  constructor(accountName, characters = [], guilds = [], gold = 0, lastTick = Date.now(), encounters = []) {
+  constructor(accountName, characters = [], guilds = [], gold = 0, lastTick = Date.now(), encounters = [], dungeonRuns = []) {
     this.accountName = accountName
     this.characters = characters
     this.guilds = guilds
     for (const character of characters) character.copper += gold / characters.length
     this.lastTick = lastTick // ms timestamp up to which farming has been paid out
     this.encounters = encounters // world PvP, newest first: see encounterRecord in pvp.js
+    this.dungeonRuns = dungeonRuns // newest first: see runDungeon in dungeons.js
   }
 
   // All characters' money, in copper.
@@ -31,34 +33,50 @@ export default class Account {
     return this.characters.reduce((sum, c) => sum + c.copper, 0)
   }
 
-  // Pays out farming from `lastTick` to `now`, with world PvP in contested zones along the way. Returns
-  // what was earned, who leveled up, new gear still worn, the PvP fights (each with the `id` of its
-  // encounter record) and moves along leveling paths ({ character, from, to, reason, level }).
+  // Pays out farming from `lastTick` to `now`, with world PvP in contested zones and dungeon runs along the
+  // way. Returns what was earned, who leveled up, new gear still worn, the PvP fights (each with the `id` of
+  // its encounter record), moves along leveling paths ({ character, from, to, reason, level }), dungeon quest
+  // pickup trips ({ character, zone, quests, steps }) and dungeon runs (records, see runDungeon).
   tick(now = Date.now(), random = Math.random) {
     const hours = Math.max(0, now - this.lastTick) / MS_PER_HOUR
     const start = Math.min(this.lastTick, now)
     this.lastTick = Math.max(this.lastTick, now)
-    const result = { hours, copper: 0, levelUps: [], upgrades: [], fights: [], travels: [] }
+    const result = { hours, copper: 0, levelUps: [], upgrades: [], fights: [], travels: [], errands: [], runs: [] }
     const leveled = new Set()
     const upgraded = new Map(this.characters.map((c) => [c, new Set()]))
     for (let done = 0; done < hours; done += SLICE_HOURS) {
       const slice = Math.min(SLICE_HOURS, hours - done)
-      const fights = worldPvp(this.characters, slice, start + (done + slice) * MS_PER_HOUR, random)
+      const sliceEnd = start + (done + slice) * MS_PER_HOUR
+      const fights = worldPvp(this.characters, slice, sliceEnd, random)
       for (const fight of fights) {
         fight.id = crypto.randomUUID()
         this.encounters.unshift(encounterRecord(fight, fight.id))
       }
       result.fights.push(...fights)
       for (const character of this.characters) {
-        const { copper, levels, upgrades, travels } = character.farm(slice, now)
+        const { copper, levels, upgrades, travels, errands } = character.farm(slice, now)
         result.copper += copper
         if (levels > 0) leveled.add(character)
         for (const item of upgrades) upgraded.get(character).add(item)
         for (const travel of travels) result.travels.push({ character, ...travel })
+        for (const errand of errands) result.errands.push({ character, ...errand })
+        autoQueue(character, sliceEnd)
+      }
+      for (const run of formGroups(this.characters, sliceEnd, random)) {
+        this.dungeonRuns.unshift(run.record)
+        result.runs.push(run.record)
+        run.members.forEach((character, i) => {
+          const { levels, upgrades, travel } = run.results[i]
+          result.copper += run.record.members[i].copper
+          if (levels > 0) leveled.add(character)
+          for (const item of upgrades) upgraded.get(character).add(item)
+          if (travel) result.travels.push({ character, ...travel })
+        })
       }
     }
     result.levelUps = [...leveled]
     if (this.encounters.length > ENCOUNTER_LOG_SIZE) this.encounters.length = ENCOUNTER_LOG_SIZE
+    if (this.dungeonRuns.length > RUN_LOG_SIZE) this.dungeonRuns.length = RUN_LOG_SIZE
     trimLogs(this.encounters)
     for (const [character, items] of upgraded) {
       const worn = new Set(Object.values(character.equipment))
@@ -80,7 +98,23 @@ export default class Account {
     if (!character) return
     this.tick(now)
     character.zone = null
-    character.timeBank = 0
+    character.timeBank = Math.min(0, character.timeBank)
+  }
+
+  // Puts the character in the queue for the dungeon; a group forms on the next tick. Returns false if it
+  // can't enter it.
+  queueDungeon(characterId, dungeonName, now = Date.now()) {
+    const character = this.getCharacter(characterId)
+    if (!character) return false
+    this.tick(now)
+    return joinQueue(character, dungeonName, now)
+  }
+
+  leaveDungeonQueue(characterId, now = Date.now()) {
+    const character = this.getCharacter(characterId)
+    if (!character) return
+    this.tick(now)
+    leaveQueue(character)
   }
 
   getCharacter(id) {
@@ -127,7 +161,7 @@ export default class Account {
       .map((c) => ({ ...c, characterSpec: c.characterSpec ?? defaultSpec(c.characterClass, c.characterRole) }))
       .filter((c) => Object.keys(Character.validate(c)).length === 0)
       .map((c) => {
-        const character = new Character({ ...c, characterXp: 0, zone: null, copper: 0, spells: undefined, talents: {}, equipment: {}, bag: [], questsDone: [], questLog: {}, timeBank: 0, lootLog: [], honorableKills: 0, honor: 0, honorToday: null, pvpKills: 0, pvpDeaths: 0, pvpLog: [], pvpReadyAt: 0, hearthReadyAt: 0 })
+        const character = new Character({ ...c, characterXp: 0, zone: null, copper: 0, spells: undefined, talents: {}, equipment: {}, bag: [], questsDone: [], questLog: {}, timeBank: 0, lootLog: [], honorableKills: 0, honor: 0, honorToday: null, pvpKills: 0, pvpDeaths: 0, pvpLog: [], pvpReadyAt: 0, hearthReadyAt: 0, dungeonQuests: [], dungeonQueue: null, dungeonClears: {}, queueDeclined: null })
         const xp = Number(c.characterXp)
         if (Number.isFinite(xp) && xp > 0 && xp < character.xpToNextLevel) character.characterXp = xp
         if (!zoneLockReason(character, getZone(c.zone))) character.zone = c.zone
@@ -143,6 +177,7 @@ export default class Account {
     const lastTick = Number(data.lastTick)
     const encounters = (Array.isArray(data.encounters) ? data.encounters.slice(0, ENCOUNTER_LOG_SIZE) : []).map(restoreEncounter).filter(Boolean)
     trimLogs(encounters)
+    const runs = (Array.isArray(data.dungeonRuns) ? data.dungeonRuns.slice(0, RUN_LOG_SIZE) : []).map(restoreRun).filter(Boolean)
     return new Account(
       String(data.accountName),
       characters,
@@ -150,6 +185,7 @@ export default class Account {
       Number.isFinite(gold) && gold > 0 ? gold : 0,
       Number.isFinite(lastTick) && lastTick > 0 ? Math.min(lastTick, now) : now,
       encounters,
+      runs,
     )
   }
 }

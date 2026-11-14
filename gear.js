@@ -1,8 +1,8 @@
 // Classic gear rules: who can use what, where it goes, how good it is for a spec, and loot/quest rolls.
-import { BASE_HEALTH_MANA, BASE_STATS, ITEMS, LOOT, LOOT_REFS, MOBS, QUESTS, QUEST_ITEMS, SUFFIXES, SUFFIX_POOLS, ZONE_QUESTS } from './gear-data.js'
+import { BASE_HEALTH_MANA, BASE_STATS, DUNGEONS, DUNGEON_QUESTS, ITEMS, LOOT, LOOT_REFS, MOBS, QUESTS, QUEST_ITEMS, SUFFIXES, SUFFIX_POOLS, ZONE_QUESTS } from './gear-data.js'
 import { CLASSES } from './data.js'
 
-export { BASE_HEALTH_MANA, BASE_STATS, QUESTS, QUEST_ITEMS, ZONE_QUESTS }
+export { BASE_HEALTH_MANA, BASE_STATS, DUNGEONS, DUNGEON_QUESTS, QUESTS, QUEST_ITEMS, ZONE_QUESTS }
 
 // Owned items are keyed by item id (number), or "itemId:suffixId" (string) for random "of the ..." items.
 const suffixedItems = new Map()
@@ -50,7 +50,7 @@ export function rollSuffix(id, random = Math.random) {
   return `${id}:${pool.at(-1)[0]}`
 }
 
-export const getQuest = (id) => (Object.hasOwn(QUESTS, id) ? QUESTS[id] : undefined)
+export const getQuest = (id) => (Object.hasOwn(QUESTS, id) ? QUESTS[id] : Object.hasOwn(DUNGEON_QUESTS, id) ? DUNGEON_QUESTS[id] : undefined)
 
 export const QUALITIES = ['poor', 'common', 'uncommon', 'rare', 'epic']
 

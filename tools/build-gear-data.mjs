@@ -529,6 +529,156 @@ for (const row of questRows) {
 // Prerequisites outside this data set are treated as done.
 for (const quest of Object.values(quests)) if (quest.prev && !quests[quest.prev]) delete quest.prev
 
+// ---- Dungeons ----
+// 5-player dungeons (no raids, and Lower Blackrock Spire without the upper half): [name, map id, quest area ids,
+// level range, faction that can enter (by its capital), minutes for a clear at the right level, bosses in kill
+// order]. Trash is every other hostile creature spawned in the map.
+const DUNGEON_LIST = [
+  ['Ragefire Chasm', 389, [2437], 13, 18, 'Horde', 30, ['Oggleflint', 'Taragaman the Hungerer', 'Jergosh the Invoker', 'Bazzalan']],
+  ['Wailing Caverns', 43, [718], 17, 24, null, 60, ['Lady Anacondra', 'Lord Cobrahn', 'Kresh', 'Lord Pythas', 'Skum', 'Lord Serpentis', 'Verdan the Everliving', 'Mutanus the Devourer', 'Deviate Faerie Dragon']],
+  ['The Deadmines', 36, [1581], 17, 26, null, 60, ["Rhahk'Zor", 'Miner Johnson', "Sneed's Shredder", 'Sneed', 'Gilnid', 'Mr. Smite', 'Captain Greenskin', 'Edwin VanCleef', 'Cookie']],
+  ['Shadowfang Keep', 33, [209, 236], 22, 30, null, 50, ['Rethilgore', 'Razorclaw the Butcher', 'Baron Silverlaine', 'Commander Springvale', 'Odo the Blindwatcher', 'Deathsworn Captain', 'Fenrus the Devourer', 'Wolf Master Nandos', 'Archmage Arugal']],
+  ['Blackfathom Deeps', 48, [719, 2797], 24, 32, null, 60, ['Ghamoo-ra', 'Lady Sarevess', 'Gelihast', 'Lorgus Jett', 'Baron Aquanis', 'Twilight Lord Kelris', "Old Serra'kis", "Aku'mai"]],
+  ['The Stockade', 34, [717], 24, 32, 'Alliance', 35, ['Targorr the Dread', 'Kam Deepfury', 'Hamhock', 'Bazil Thredd', 'Dextren Ward', 'Bruegal Ironknuckle']],
+  ['Gnomeregan', 90, [133, 721], 29, 38, null, 80, ['Grubbis', 'Viscous Fallout', 'Electrocutioner 6000', 'Crowd Pummeler 9-60', 'Dark Iron Ambassador', 'Mekgineer Thermaplugg']],
+  ['Razorfen Kraul', 47, [491, 1717], 30, 40, null, 60, ['Roogug', 'Aggem Thorncurse', 'Death Speaker Jargba', 'Overlord Ramtusk', 'Agathelos the Raging', 'Blind Hunter', 'Charlga Razorflank', 'Earthcaller Halmgar']],
+  ['Scarlet Monastery', 189, [796], 28, 45, null, 150, ['Interrogator Vishas', 'Bloodmage Thalnos', 'Ironspine', 'Azshir the Sleepless', 'Fallen Champion', 'Houndmaster Loksey', 'Arcanist Doan', 'Herod', 'Scarlet Commander Mograine', 'High Inquisitor Whitemane']],
+  ['Razorfen Downs', 129, [722, 1316], 37, 46, null, 60, ["Tuten'kash", 'Mordresh Fire Eye', 'Glutton', 'Ragglesnout', 'Amnennar the Coldbringer', 'Plaguemaw the Rotting']],
+  ['Uldaman', 70, [1337, 1517], 41, 51, null, 80, ['Revelosh', 'Baelog', 'Ironaya', 'Obsidian Sentinel', 'Ancient Stone Keeper', 'Galgann Firehammer', 'Grimlok', 'Archaedas']],
+  ["Zul'Farrak", 209, [1176, 978], 44, 54, null, 75, ["Antu'sul", 'Theka the Martyr', "Witch Doctor Zum'rah", 'Nekrum Gutchewer', "Shadowpriest Sezz'ziz", 'Sergeant Bly', 'Hydromancer Velratha', "Gahz'rilla", 'Chief Ukorz Sandscalp', 'Ruuzlu', 'Zerillis', 'Sandarr Dunereaver']],
+  ['Maraudon', 349, [2100], 46, 55, null, 100, ['Noxxion', 'Razorlash', 'Lord Vyletongue', 'Meshlok the Harvester', 'Celebras the Cursed', 'Landslide', 'Tinkerer Gizlock', 'Rotgrip', 'Princess Theradras']],
+  ['Sunken Temple', 109, [1477, 1417], 50, 56, null, 90, ["Atal'alarion", 'Dreamscythe', 'Weaver', "Jammal'an the Prophet", 'Ogom the Wretched', 'Morphaz', 'Hazzas', 'Shade of Eranikus', 'Avatar of Hakkar']],
+  ['Blackrock Depths', 230, [1584], 52, 60, null, 180, ['High Interrogator Gerstahn', 'Lord Roccor', 'Houndmaster Grebmar', 'Pyromancer Loregrain', 'Lord Incendius', 'Warder Stilgiss', 'Verek', 'Fineous Darkvire', "Bael'Gar", 'General Angerforge', 'Golem Lord Argelmach', 'Hurley Blackbreath', 'Phalanx', 'Ribbly Screwspigot', 'Plugger Spazzring', 'Ambassador Flamelash', 'Magmus', 'Emperor Dagran Thaurissan']],
+  ['Lower Blackrock Spire', 229, [1583], 55, 60, null, 90, ['Highlord Omokk', 'Spirestone Butcher', 'Spirestone Battle Lord', 'Spirestone Lord Magus', "Shadow Hunter Vosh'gajin", 'War Master Voone', 'Mother Smolderweb', 'Crystal Fang', 'Urok Doomhowl', 'Bannok Grimaxe', 'Quartermaster Zigris', 'Halycon', 'Gizrul the Slavener', 'Ghok Bashguud', 'Burning Felguard', 'Overlord Wyrmthalak']],
+  ['Dire Maul', 429, [2557, 2577], 55, 60, null, 180, ['Pusillin', 'Zevrim Thornhoof', 'Hydrospawn', 'Lethtendris', 'Alzzin the Wildshaper', 'Tendris Warpwood', 'Illyanna Ravenoak', 'Magister Kalendris', "Immol'thar", 'Prince Tortheldrin', "Tsu'zee", "Guard Mol'dar", 'Stomper Kreeg', 'Guard Fengus', "Guard Slip'kik", 'Captain Kromcrush', "Cho'Rush the Observer", 'King Gordok']],
+  ['Stratholme', 329, [2017, 2279], 58, 60, null, 150, ['The Unforgiven', 'Timmy the Cruel', 'Malor the Zealous', 'Cannon Master Willey', 'Archivist Galford', 'Balnazzar', 'Hearthsinger Forresten', 'Skul', 'Magistrate Barthilas', 'Stonespine', "Nerub'enkan", 'Baroness Anastari', 'Maleki the Pallid', 'Ramstein the Gorger', 'Baron Rivendare']],
+  ['Scholomance', 289, [2057], 58, 60, null, 120, ['Kirtonos the Herald', 'Jandice Barov', 'Rattlegore', 'Marduk Blackpool', 'Vectus', 'Ras Frostwhisper', 'Instructor Malicia', 'Doctor Theolen Krastinov', 'Lorekeeper Polkelt', 'The Ravenian', 'Lord Alexei Barov', 'Lady Illucia Barov', 'Darkmaster Gandling']],
+]
+// Upper Blackrock Spire shares Lower's map.
+const UPPER_SPIRE = /^(Rage Talon|Blackhand|Chromatic|Rookery|Pyroguard Emberseer|Solakar Flamewreath|Warchief Rend Blackhand|Gyth|The Beast|General Drakkisath|Goraluk Anvilcrack|Jed Runewatcher|Lord Valthalak)/
+const TOTEM = 11
+// Spawn points with entry 0 pick one of several creatures (creature_spawn_entry, or their creature spawn group's
+// entries); each gets an even share.
+const spawnEntries = groupBy(sqlRows(sql, 'creature_spawn_entry'), 'guid')
+const creatureGroups = new Set(sqlRows(sql, 'spawn_group').filter((g) => g.Type === 0).map((g) => g.Id))
+const groupEntries = groupBy(sqlRows(sql, 'spawn_group_entry'), 'Id')
+const spawnGroupOf = new Map(sqlRows(sql, 'spawn_group_spawn').filter((s) => creatureGroups.has(s.Id)).map((s) => [s.Guid, s.Id]))
+const spawnsByMap = new Map() // map -> Map(entry -> spawn points)
+for (const s of sqlRows(sql, 'creature')) {
+  if (!spawnsByMap.has(s.map)) spawnsByMap.set(s.map, new Map())
+  const counts = spawnsByMap.get(s.map)
+  const entries = s.id ? [s.id]
+    : spawnEntries.has(s.guid) ? spawnEntries.get(s.guid).map((r) => r.entry)
+      : (groupEntries.get(spawnGroupOf.get(s.guid)) ?? []).map((r) => r.Entry)
+  for (const entry of entries) counts.set(entry, (counts.get(entry) ?? 0) + 1 / entries.length)
+}
+for (const counts of spawnsByMap.values()) for (const [entry, n] of counts) counts.set(entry, Math.max(1, Math.round(n)))
+const creaturesByName = groupBy([...creatures.values()], 'Name')
+const isDungeonFoe = (c, min) => c && !pfUnits[c.Entry]?.fac && !(c.UnitFlags & UNATTACKABLE) && !c.NpcFlags && !c.Civilian &&
+  ![CRITTER, TOTEM].includes(c.CreatureType) && c.MinLevelHealth > 0 && c.Rank !== 3 && c.MaxLevel >= min - 5 && c.MaxLevel <= 63 &&
+  !UPPER_SPIRE.test(c.Name) && !/trigger|\[DND\]/i.test(c.Name)
+function addDungeonMob(c) {
+  mobs[c.Entry] ??= buildMob(c)
+  if (c.Rank >= 1) mobs[c.Entry].elite = true
+}
+const dungeons = []
+const dungeonOfArea = new Map()
+const dungeonFoes = new Map() // dungeon name -> Set of creature entries
+for (const [name, map, areas, min, max, faction, minutes, bossNames] of DUNGEON_LIST) {
+  const spawned = spawnsByMap.get(map) ?? new Map()
+  const bosses = []
+  for (const bossName of bossNames) {
+    const options = creaturesByName.get(bossName) ?? []
+    const c = options.find((o) => spawned.has(o.Entry)) ?? options.find((o) => o.Rank >= 1 && o.MaxLevel >= min - 3 && o.MinLevel <= max + 3)
+    if (!c) {
+      console.warn(`${name}: no creature named ${bossName}`)
+      continue
+    }
+    bosses.push(c.Entry)
+    addDungeonMob(c)
+  }
+  const trash = []
+  for (const [entry, count] of spawned) {
+    const c = creatures.get(entry)
+    if (bosses.includes(entry) || !isDungeonFoe(c, min)) continue
+    trash.push([entry, count])
+    addDungeonMob(c)
+  }
+  trash.sort(([a], [b]) => a - b)
+  const dungeon = { name, level: [min, max], minutes, bosses, trash }
+  if (faction) dungeon.faction = faction
+  dungeons.push(dungeon)
+  for (const area of areas) dungeonOfArea.set(area, name)
+  dungeonFoes.set(name, new Set([...bosses, ...trash.map(([entry]) => entry)]))
+}
+
+// Dungeon quests: the quests for each dungeon (by quest area) whose kills and mob drops are all inside it, picked
+// up from a quest giver. `zone` is where the giver stands, or null for a city or anywhere outside this game's
+// zones. Prerequisites that aren't quests here already become `step`s of the chain: quests done by visiting
+// their zone. Quest-log limits don't apply to either.
+const questById = new Map(questRows.map((row) => [row.entry, row]))
+// Creatures with no spawn point anywhere are summoned by scripts; ones of the dungeon's level count as inside it.
+const spawnedAnywhere = new Set([...spawnsByMap.values()].flatMap((counts) => [...counts.keys()]))
+function objectivesInside(row, foes, [min, max]) {
+  const inside = (c) => foes.has(c.Entry) || (!spawnedAnywhere.has(c.Entry) && c.MaxLevel >= min - 5 && c.MinLevel <= max + 5)
+  for (let k = 1; k <= 4; k++) {
+    const id = row[`ReqCreatureOrGOId${k}`]
+    if (id > 0 && !row[`ReqSpellCast${k}`] && ![...creatures.values()].some((c) => (c.Entry === id || c.KillCredit1 === id || c.KillCredit2 === id) && inside(c))) return false
+    const item = row[`ReqItemId${k}`]
+    const drops = item ? itemLootIds.get(item) ?? [] : []
+    if (drops.length && !drops.some(([lootId]) => (creaturesByLoot.get(lootId) ?? []).some(inside))) return false
+  }
+  return true
+}
+const giverZone = (pf) => (pf.start?.U ?? []).flatMap((u) => Object.values(pfUnits[u]?.coords ?? {})).map((c) => zoneById.get(c[2])).find(Boolean) ?? null
+function questFields(row, pf) {
+  const keep = (ids) => ids.filter((id) => id && isCandidate(itemRows.get(id)))
+  const choice = keep([1, 2, 3, 4, 5, 6].map((k) => row[`RewChoiceItemId${k}`]))
+  const reward = keep([1, 2, 3, 4].map((k) => row[`RewItemId${k}`]))
+  for (const id of [...choice, ...reward]) keptItems.add(id)
+  const level = row.QuestLevel > 0 ? Math.min(row.QuestLevel, 60) : Math.max(1, row.MinLevel)
+  const quest = { title: row.Title, level, minLevel: Math.max(1, row.MinLevel) }
+  const faction = questFaction(row, pf)
+  if (faction) quest.faction = faction
+  if (row.RequiredRaces & 0xff && (row.RequiredRaces & 0xff) !== 0xff) quest.races = row.RequiredRaces
+  if (row.RequiredClasses) quest.classes = row.RequiredClasses
+  if (row.PrevQuestId) quest.prev = Math.abs(row.PrevQuestId)
+  if (row.ExclusiveGroup > 0) quest.exclusive = row.ExclusiveGroup
+  const xp = row.QuestLevel > 0 && row.QuestLevel <= 60 ? Math.round(row.RewMoneyMaxLevel / 0.6) : 0
+  if (xp) quest.xp = xp
+  if (row.RewOrReqMoney > 0) quest.money = row.RewOrReqMoney
+  if (choice.length) quest.choice = choice
+  if (reward.length) quest.reward = reward
+  return quest
+}
+const dungeonQuests = {}
+for (const row of questRows) {
+  const dungeon = dungeonOfArea.get(row.ZoneOrSort)
+  const pf = pfQuests[row.entry]
+  if (!dungeon || !pf?.start?.U?.length || BAD_TITLE.test(row.Title) || row.Type === 62 || quests[row.entry]) continue
+  if (!objectivesInside(row, dungeonFoes.get(dungeon), dungeons.find((d) => d.name === dungeon).level)) {
+    if (process.env.DEBUG_Q) console.warn(`${dungeon}: ${row.entry} ${row.Title} has objectives outside`)
+    continue
+  }
+  const quest = { ...questFields(row, pf), dungeon, zone: giverZone(pf) }
+  if (!quest.xp && !quest.money && !quest.choice && !quest.reward) continue
+  dungeonQuests[row.entry] = quest
+}
+const MAX_CHAIN = 6
+function chainStep(id, dungeon, depth) {
+  if (quests[id] || dungeonQuests[id]) return true
+  const row = questById.get(id)
+  const pf = pfQuests[id]
+  if (!row || !pf?.start?.U?.length || depth > MAX_CHAIN || BAD_TITLE.test(row.Title)) return false
+  const step = { ...questFields(row, pf), dungeon, step: true, zone: giverZone(pf) ?? zoneOfArea(row.ZoneOrSort) ?? null }
+  dungeonQuests[id] = step
+  if (step.prev && !chainStep(step.prev, dungeon, depth + 1)) delete step.prev
+  return true
+}
+for (const [id, quest] of Object.entries(dungeonQuests)) {
+  if (!quest.step && quest.prev && !chainStep(quest.prev, quest.dungeon, 1)) delete quest.prev
+}
+
 // ---- Base stats ----
 const RACE_NAMES = { 1: 'Human', 2: 'Orc', 3: 'Dwarf', 4: 'Night Elf', 5: 'Undead', 6: 'Tauren', 7: 'Gnome', 8: 'Troll' }
 const CLASS_NAMES = { 1: 'Warrior', 2: 'Paladin', 3: 'Hunter', 4: 'Rogue', 5: 'Priest', 7: 'Shaman', 8: 'Mage', 9: 'Warlock', 11: 'Druid' }
@@ -859,8 +1009,14 @@ export const CLASS_SPELLS = ${json(classSpells)}
 export const STARTING_SPELLS = ${json(startingSpells)}
 export const PETS = ${json(pets)}
 export const TALENTS = ${json(talents)}
+export const DUNGEONS = ${json(dungeons)}
+export const DUNGEON_QUESTS = ${json(dungeonQuests)}
 `
 fs.writeFileSync(OUT, out)
+for (const d of dungeons) {
+  const list = Object.values(dungeonQuests).filter((q) => q.dungeon === d.name)
+  console.log(`${d.name}: ${d.bosses.length} bosses, ${d.trash.length} trash kinds (${d.trash.reduce((n, [, c]) => n + c, 0)} spawns), ${list.filter((q) => !q.step).length} quests + ${list.filter((q) => q.step).length} chain steps`)
+}
 console.log(
   `items ${Object.keys(items).length} (${Object.values(items).filter((i) => i.suffixes).length} random-suffix), suffixes ${Object.keys(suffixData).length},`,
   `loot tables ${Object.keys(loot).length}, refs ${Object.keys(refs).length},`,

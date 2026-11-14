@@ -69,6 +69,18 @@ It's a PvP server (`pvp.js`). Two characters of opposite factions farming the sa
 
 Not modeled: stuns, fears, roots, kiting, stealth openers, trinkets, and running away mid-fight (except bubble hearth). The game data has no mounts, stealth or Divine Shield, so they're given by class and level; Travel Form's speed comes from its spell data. Tuning constants are at the top of `pvp.js`.
 
+## Dungeons
+
+The 19 Classic five-player dungeons, Ragefire Chasm to Scholomance, with their bosses, trash and quests (`dungeons.js`). Raids aren't included.
+
+- **Quests**: a farming character picks up the quests (and pre-quest chain steps) for dungeons in its level range, faction, race and class, before anything else. Givers in its own zone come first, then cities, then the zone with the most to pick up; a trip to another zone costs 15 minutes there and back, plus a minute per quest picked up and the usual quest time for each chain step. Dungeon quests don't count against the 5-quest log.
+- **Queueing**: once there's nothing left to pick up, a farming character queues for every dungeon in its level range that it holds quests for or hasn't cleared, most quests held first. Queue anyone by hand from the character page (any dungeon its faction can enter at its level); a manual queue is for that one dungeon and isn't changed automatically. Leaving a queue keeps the character out until it levels or picks up more quests. Idle characters don't queue on their own.
+- **Groups**: when 5 characters of one faction are queued for the same dungeon, the 5 who've waited longest run it. Characters still owing farming time (from PvP or an earlier run) wait.
+- **The run**: pace is the group's power against the bosses' level, ×0.8 with no tank and again with no healer. Below 0.6 the group wipes partway through, with no quest credit and no clear, and leaves the queue. Otherwise it clears everything in the dungeon's listed time scaled by pace (half to triple). Every member gets group XP (×1.4 split five ways) and a fifth of the coin and vendor value for each kill; finishing turns in every member's quests for that dungeon. The run's time is taken from farming time, up to 12 hours owed.
+- **Loot**: bosses and trash drop from their real loot tables, bind on pickup and bind on equip alike. Anyone who would wear an item right now rolls Need; otherwise everyone Greeds. Winners equip upgrades at once.
+
+The Dungeons page shows each dungeon's queues and the account's last 50 runs; each run opens a page with the group, what each member gained and turned in, and the loot.
+
 `gear-data.js` is generated. To rebuild it, put the source data in a folder and run:
 
     node tools/build-gear-data.mjs /path/to/data

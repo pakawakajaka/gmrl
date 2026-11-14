@@ -2056,6 +2056,104 @@ main:has(.character-sheet) {
   width: 4rem;
 }
 
+/* Dungeons page */
+
+.dungeon-list {
+  display: grid;
+  gap: 0.4rem;
+  margin: 1rem 0 1.5rem;
+  padding: 0;
+  list-style: none;
+}
+
+.dungeon-row {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  padding: 0.6rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.dungeon-queues {
+  display: flex;
+  flex: none;
+  gap: 1rem;
+}
+
+.dungeon-queue {
+  display: grid;
+  min-width: 8rem;
+}
+
+.dungeon-queue .faction-name {
+  margin-bottom: 0;
+}
+
+.dungeon-runs-title {
+  margin-bottom: 0.75rem;
+}
+
+/* Character sheet dungeon panel */
+
+.dungeon-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.dungeon-picks {
+  display: grid;
+  gap: 0.35rem;
+  max-height: 22rem;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.dungeon-picks > li {
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.4rem 0.6rem;
+  border-left: 3px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  font-size: 0.85rem;
+}
+
+.dungeon-picks > li.in-range {
+  border-left-color: var(--class-color);
+}
+
+.dungeon-pick-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.dungeon-queued {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--class-color);
+}
+
+.dungeon-quests {
+  margin: 0;
+  padding-left: 1rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+@media (max-width: 640px) {
+  .dungeon-row {
+    flex-wrap: wrap;
+  }
+}
+
 @media (max-width: 640px) {
   .encounter-sides {
     grid-template-columns: 1fr;

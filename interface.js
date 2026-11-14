@@ -9,6 +9,7 @@ import { DEFAULT_SORT } from './sort.js'
 import { renderTalents } from './talents-view.js'
 import { createDefaultAccount, loadAccount, saveAccount, saveAccountToFile } from './storage.js'
 import { renderWorldPvp, headline } from './world-pvp.js'
+import { renderDungeons, runHeadline } from './dungeons-view.js'
 import { encounterRecord } from './pvp.js'
 
 const APP_TITLE = 'Guild Master Raid Leader'
@@ -17,6 +18,7 @@ const SAVE_EVERY_MS = 15000
 const MAX_NOTICES = 4
 const MAX_UPGRADE_NOTICES = 3
 const MAX_FIGHT_NOTICES = 2
+const MAX_RUN_NOTICES = 2
 
 const app = document.getElementById('app')
 const goldEl = document.getElementById('gold')
@@ -53,7 +55,12 @@ function render() {
       onSpec: ({ spec, role }) => change(() => character.changeSpec(spec, role)),
     }))
   } else if (character) {
-    app.replaceChildren(renderCharacterSheet({ character, onDelete: handleDelete }))
+    app.replaceChildren(renderCharacterSheet({
+      character,
+      onDelete: handleDelete,
+      onQueue: (name) => handleQueue(character.id, name),
+      onLeaveQueue: () => handleLeaveQueue(character.id),
+    }))
   } else if (view === 'create') {
     app.replaceChildren(renderCharacterForm({ account, onSave: handleSave }))
   } else if (view === 'farm') {
@@ -68,6 +75,8 @@ function render() {
     }))
   } else if (view === 'pvp') {
     app.replaceChildren(renderWorldPvp({ account, encounterId: id }))
+  } else if (view === 'dungeons') {
+    app.replaceChildren(renderDungeons({ account, runId: id }))
   } else {
     app.replaceChildren(renderRoster({
       account,
@@ -81,7 +90,7 @@ function render() {
   }
 
   for (const link of document.querySelectorAll('.site-nav a')) {
-    const active = link.dataset.view === (view === 'farm' || view === 'pvp' ? view : 'roster')
+    const active = link.dataset.view === (['farm', 'pvp', 'dungeons'].includes(view) ? view : 'roster')
     if (active) link.setAttribute('aria-current', 'page')
     else link.removeAttribute('aria-current')
   }
@@ -165,13 +174,25 @@ function reportTravels(travels) {
   }
 }
 
+// One notice per dungeon run.
+function reportRuns(runs) {
+  for (const run of runs.slice(0, MAX_RUN_NOTICES)) {
+    const who = run.members.flatMap((m, i) => [i ? ', ' : '', account.getCharacter(m.id) ? el('a', { href: `#/character/${m.id}` }, m.name) : m.name])
+    const quests = run.members.reduce((n, m) => n + m.quests.length, 0)
+    notify(...who, `: ${runHeadline(run).replace(/^./, (c) => c.toLowerCase())}${quests ? ` and turned in ${quests} quest${quests === 1 ? '' : 's'}` : ''}. `, el('a', { href: `#/dungeons/${run.id}` }, 'View'))
+  }
+  const more = runs.length - MAX_RUN_NOTICES
+  if (more > 0) notify(`…and ${more} more dungeon run${more === 1 ? '' : 's'}. See them on `, el('a', { href: '#/dungeons' }, 'Dungeons'), '.')
+}
+
 function gameTick() {
-  const { levelUps, upgrades, fights, travels } = account.tick()
+  const { levelUps, upgrades, fights, travels, errands, runs } = account.tick()
   reportLevelUps(levelUps)
   reportTravels(travels)
   reportUpgrades(upgrades)
   reportFights(fights)
-  if (levelUps.length || upgrades.length || fights.length || travels.length) {
+  reportRuns(runs)
+  if (levelUps.length || upgrades.length || fights.length || travels.length || errands.length || runs.length) {
     if (!app.querySelector('dialog[open]')) render() // don't close an open modal; the next render catches up
     save()
   } else if (currentView().view === 'farm') {
@@ -209,6 +230,17 @@ function handleRecall(characterId) {
   render()
 }
 
+function handleQueue(characterId, dungeonName) {
+  if (account.queueDungeon(characterId, dungeonName)) save()
+  render()
+}
+
+function handleLeaveQueue(characterId) {
+  account.leaveDungeonQueue(characterId)
+  save()
+  render()
+}
+
 function handleDelete(character) {
   account.deleteCharacter(character.id)
   save()
@@ -242,8 +274,9 @@ function handleReset() {
 
 // Pay out anything earned while the page was closed.
 const away = account.tick()
-if (away.hours >= 1 / 60 && (away.copper >= 1 || away.levelUps.length || away.fights.length)) {
+if (away.hours >= 1 / 60 && (away.copper >= 1 || away.levelUps.length || away.fights.length || away.runs.length)) {
   reportFights(away.fights)
+  reportRuns(away.runs)
   reportUpgrades(away.upgrades)
   reportTravels(away.travels)
   reportLevelUps(away.levelUps)
@@ -251,7 +284,9 @@ if (away.hours >= 1 / 60 && (away.copper >= 1 || away.levelUps.length || away.fi
   const kills = battles.reduce((sum, f) => sum + f.honor, 0)
   const honor = battles.reduce((sum, f) => sum + f.points, 0)
   const fought = battles.length ? ` Your characters fought ${battles.length} time${battles.length === 1 ? '' : 's'} in contested zones (${kills} honorable kill${kills === 1 ? '' : 's'}${kills ? `, ${formatNumber(Math.floor(honor))} honor` : ''}).` : ''
-  notify(`Welcome back! While you were away for ${formatDuration(away.hours)}, your characters earned ${formatMoney(away.copper)}${away.upgrades.length ? ` and equipped ${away.upgrades.length} new item${away.upgrades.length === 1 ? '' : 's'}` : ''}.${fought}`)
+  const cleared = away.runs.filter((r) => r.success).length
+  const dungeons = away.runs.length ? ` They ran ${away.runs.length} dungeon${away.runs.length === 1 ? '' : 's'} (${cleared} cleared).` : ''
+  notify(`Welcome back! While you were away for ${formatDuration(away.hours)}, your characters earned ${formatMoney(away.copper)}${away.upgrades.length ? ` and equipped ${away.upgrades.length} new item${away.upgrades.length === 1 ? '' : 's'}` : ''}.${fought}${dungeons}`)
   save()
 }
 if (loaded.dropped > 0) {
