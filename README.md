@@ -7,6 +7,10 @@ Guild Master Raid Leader
 
 This runs `dev-server.js` (live-server on http://127.0.0.1:8080 plus a save endpoint) and opens main.html.
 
+    npm test
+
+This runs every `tests/*-test.mjs` suite (jsdom, no browser needed); `node tests/<name>-test.mjs` runs one and prints its checks.
+
 An account holds guilds, and each guild holds its characters. A guild is Alliance or Horde and only takes characters of that faction; every character belongs to exactly one guild, chosen when it's created. Guilds can't be renamed and characters can't move between guilds. For alpha testing an account can have one guild of each faction (later it will be one guild in all). Use "+ Create Guild" on the roster to found one.
 
 The account is saved in the browser's localStorage (older saves are converted on load). On the roster, "Save to file" writes that data to `gmrl-save.json` in this folder, and "Reset to default data" restores the starting guilds and characters.
@@ -67,7 +71,7 @@ It's a PvP server (`pvp.js`). Two characters of opposite factions farming the sa
 - **Bubble hearth**: a Paladin from 34 that's losing casts Divine Shield and hearths out. It counts as neither a death nor a kill, costs 10 minutes of getting back, and works once an hour.
 - **The cost**: the fight's time, plus eating and drinking for survivors, or a 2-minute corpse run and reviving at half health and mana for the dead, is taken from farming time.
 - **Limits**: a player is in at most 4 fights an hour. For 15 minutes after joining one, and until it has recovered, it neither spots nor is spotted. With about a dozen players per faction in a zone, each one fights about twice an hour.
-- **Honor**: each player killed gives a kill to every enemy there when it fell, and honor split evenly between them, as in Classic 1.12 (vmangos `GetHonorGain`, everyone at rank 0): 188.3 × a killer-level coefficient (1 at 60, 0.9545 at 50+, 0.5707 at 40+, 0.3434 at 30+, 0.207 at 20+, 0.1212 below) × the kill-XP level factor (+5% per level the victim is above, up to +20%; fading to nothing at gray) × 10% less for each earlier kill of the same player that UTC day. A kill worth honor is an honorable kill; past 10 a day on one player, kills give none. The character page shows honor, honorable kills, kills, deaths and the last 20 encounters; the Roster and Farm pages can sort by honor and honorable kills. The World PvP page lists the account's last 200 fights and escapes; each opens a page with both sides, who added, who died or bubble-hearthed out and when, the ganker's guess against its real odds, and each player's damage, healing and damage taken by ability. The newest 20 fights also keep their combat log, every blow and heal with the target's health after it; older ones show a timeline. As on Warcraft Logs, players show in their class color and abilities in their spell school's. Blows land for their average: the sim has no crits or misses.
+- **Honor**: each player killed gives a kill to every enemy there when it fell, and honor split evenly between them, as in Classic 1.12 (vmangos `GetHonorGain`, everyone at rank 0): 188.3 × a killer-level coefficient (1 at 60, 0.9545 at 50+, 0.5707 at 40+, 0.3434 at 30+, 0.207 at 20+, 0.1212 below) × the kill-XP level factor (+5% per level the victim is above, up to +20%; fading to nothing at gray) × 10% less for each earlier kill of the same player that UTC day. A kill worth honor is an honorable kill; past 10 a day on one player, kills give none. The character page shows honor, honorable kills, kills, deaths and the last 20 encounters; the Roster and Farm pages can sort by honor and honorable kills. The World PvP page lists the account's last 50 fights and escapes; each opens a page with both sides, who added, who died or bubble-hearthed out and when, the ganker's guess against its real odds, and each player's damage, healing and damage taken by ability. The newest 10 fights also keep their combat log, every blow and heal with the target's health after it; older ones show a timeline. As on Warcraft Logs, players show in their class color and abilities in their spell school's. Blows land for their average: the sim has no crits or misses.
 
 Not modeled: stuns, fears, roots, kiting, stealth openers, trinkets, and running away mid-fight (except bubble hearth). The game data has no mounts, stealth or Divine Shield, so they're given by class and level; Travel Form's speed comes from its spell data. Tuning constants are at the top of `pvp.js`.
 
@@ -81,7 +85,7 @@ The 19 Classic five-player dungeons, Ragefire Chasm to Scholomance, with their b
 - **The run**: pace is the group's power against the bosses' level, ×0.8 with no tank and again with no healer. Below 0.6 the group wipes partway through, with no quest credit and no clear, and leaves the queue. Otherwise it clears everything in the dungeon's listed time scaled by pace (half to triple). Every member gets group XP (×1.4 split five ways) and a fifth of the coin and vendor value for each kill; finishing turns in every member's quests for that dungeon. The run's time is taken from farming time, up to 12 hours owed.
 - **Loot**: bosses and trash drop from their real loot tables, bind on pickup and bind on equip alike. Anyone who would wear an item right now rolls Need; otherwise everyone Greeds. Winners equip upgrades at once.
 
-The Dungeons page shows each dungeon's queues and the account's last 50 runs; each run opens a page with the group, what each member gained and turned in, and the loot.
+The Dungeons page shows each dungeon's queues and the account's last 25 runs; each run opens a page with the group, what each member gained and turned in, and the loot.
 
 `gear-data.js` is generated. To rebuild it, put the source data in a folder and run:
 

@@ -12,7 +12,7 @@ import { getZone } from './zones.js'
 
 export { DUNGEONS }
 export const GROUP_SIZE = 5
-export const RUN_LOG_SIZE = 50
+export const RUN_LOG_SIZE = 25
 export const TRAVEL_SECONDS = 900 // to another zone's quest giver and back
 const PICKUP_SECONDS = 60
 const CLEAR_SHARE = 0.6 // of a dungeon's trash a run kills; the rest is skipped

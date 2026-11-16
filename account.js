@@ -8,8 +8,8 @@ import { RUN_LOG_SIZE, autoQueue, formGroups, joinQueue, leaveQueue, restoreRun 
 const ID_PATTERN = /^[\w-]+$/
 const MS_PER_HOUR = 3600 * 1000
 const SLICE_HOURS = 1 // long catch-ups run in slices so PvP sees levels change along the way
-export const ENCOUNTER_LOG_SIZE = 200
-export const ENCOUNTER_DETAIL_SIZE = 20 // the newest encounters that keep their combat log
+export const ENCOUNTER_LOG_SIZE = 50
+export const ENCOUNTER_DETAIL_SIZE = 10 // the newest encounters that keep their combat log
 
 // Drops the combat log from all but the newest encounters.
 function trimLogs(encounters) {
