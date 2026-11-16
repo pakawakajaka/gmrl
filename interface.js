@@ -7,7 +7,7 @@ import { getItem } from './gear.js'
 import { renderRoster } from './roster.js'
 import { DEFAULT_SORT } from './sort.js'
 import { renderTalents } from './talents-view.js'
-import { createDefaultAccount, loadAccount, saveAccount, saveAccountToFile } from './storage.js'
+import { STORAGE_KEY, createDefaultAccount, loadAccount, saveAccount, saveAccountToFile } from './storage.js'
 import { renderWorldPvp, headline } from './world-pvp.js'
 import { renderDungeons, runHeadline } from './dungeons-view.js'
 import { encounterRecord } from './pvp.js'
@@ -301,6 +301,12 @@ window.addEventListener('hashchange', () => {
 window.addEventListener('pagehide', save)
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') save()
+})
+// Another tab saved: take its state, so open tabs don't keep overwriting each other's runs and fights.
+window.addEventListener('storage', (event) => {
+  if (event.key !== STORAGE_KEY || !event.newValue) return
+  account = loadAccount().account
+  if (!app.querySelector('dialog[open]')) render()
 })
 setInterval(gameTick, TICK_MS)
 render()

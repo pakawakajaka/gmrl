@@ -2,7 +2,7 @@ import Account from './account.js'
 import Character from './character.js'
 import Guild from './guild.js'
 
-const STORAGE_KEY = 'gmrl.account'
+export const STORAGE_KEY = 'gmrl.account'
 
 export function createDefaultAccount() {
   const trollwarr = new Character({ characterName: 'Trollwarrior', characterClass: 'Warrior', characterSpec: 'Protection', characterRace: 'Troll', characterRole: 'Tank' })
