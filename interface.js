@@ -9,7 +9,7 @@ import { renderGuildForm } from './guild-form.js'
 import { renderRoster } from './roster.js'
 import { DEFAULT_SORT } from './sort.js'
 import { renderTalents } from './talents-view.js'
-import { STORAGE_KEY, createDefaultAccount, loadAccount, saveAccount, saveAccountToFile } from './storage.js'
+import { STORAGE_KEY, loadAccount, saveAccount, saveAccountToFile } from './storage.js'
 import { renderWorldPvp, headline } from './world-pvp.js'
 import { renderDungeons, runHeadline } from './dungeons-view.js'
 import { encounterRecord } from './pvp.js'
@@ -90,7 +90,6 @@ function render() {
       sortKey: rosterSort,
       onSelectGuild: handleSelectGuild,
       onSort: (key) => { rosterSort = key; render() },
-      onReset: handleReset,
       onSaveToFile: handleSaveToFile,
     }))
   }
@@ -281,15 +280,6 @@ async function handleSaveToFile(event) {
   }
 }
 
-function handleReset() {
-  if (!confirm('Replace all characters, guilds and gold with the default data?')) return
-  account = createDefaultAccount()
-  selectedGuild = null
-  farmSelectedId = null
-  save()
-  render()
-}
-
 // Pay out anything earned while the page was closed.
 const away = account.tick()
 if (away.hours >= 1 / 60 && (away.levelUps.length || away.upgrades.length || away.fights.length || away.runs.length)) {
@@ -309,7 +299,7 @@ if (away.hours >= 1 / 60 && (away.levelUps.length || away.upgrades.length || awa
   save()
 }
 if (loaded.dropped > 0) {
-  notify(`${loaded.dropped} saved character${loaded.dropped === 1 ? '' : 's'} ${loaded.dropped === 1 ? 'was' : 'were'} invalid (non-Classic, or no guild of ${loaded.dropped === 1 ? 'its' : 'their'} faction) and removed. Use "Reset to default data" on the Roster to restore the starting characters.`)
+  notify(`${loaded.dropped} saved character${loaded.dropped === 1 ? '' : 's'} ${loaded.dropped === 1 ? 'was' : 'were'} invalid (non-Classic, or no guild of ${loaded.dropped === 1 ? 'its' : 'their'} faction) and removed.`)
   save()
 }
 

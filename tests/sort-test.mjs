@@ -35,7 +35,7 @@ account.getCharacter(account.characters.find((c) => c.characterName === 'Bravo')
   .equipBest(Object.keys(ITEMS).map(Number).filter((id) => ITEMS[id].quality === 2 && !ITEMS[id].suffixes && ITEMS[id].itemLevel >= 28 && ITEMS[id].itemLevel <= 32))
 
 const noop = () => {}
-const rosterOrder = (sortKey) => [...renderRoster({ account, selectedGuild: null, sortKey, onSelectGuild: noop, onSort: noop, onReset: noop, onSaveToFile: noop })
+const rosterOrder = (sortKey) => [...renderRoster({ account, selectedGuild: null, sortKey, onSelectGuild: noop, onSort: noop, onSaveToFile: noop })
   .querySelectorAll('.character-card .character-name')].map((e) => e.textContent).join(',')
 const farmOrder = (sortKey) => [...renderFarm({ account, selectedId: charlie.id, sortKey, onSelect: noop, onSort: noop, onSend: noop, onRecall: noop })
   .querySelectorAll('.farm-characters .character-name')].map((e) => e.textContent).join(',')
@@ -50,7 +50,7 @@ for (const [render, page] of [[rosterOrder, 'roster'], [farmOrder, 'farm']]) {
 
 // The control shows the current sort and reports changes.
 let picked
-const view = renderRoster({ account, selectedGuild: null, sortKey: 'level', onSelectGuild: noop, onSort: (k) => { picked = k }, onReset: noop, onSaveToFile: noop })
+const view = renderRoster({ account, selectedGuild: null, sortKey: 'level', onSelectGuild: noop, onSort: (k) => { picked = k }, onSaveToFile: noop })
 const select = view.querySelector('.sort-control select')
 check('select shows current sort', select.value === 'level')
 check('select has the eight options', [...select.options].map((o) => o.textContent).join(',') === 'Name,Level,Power level,Gold,DPS,Honor,Honorable kills,Class')

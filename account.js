@@ -10,6 +10,8 @@ const MS_PER_HOUR = 3600 * 1000
 const SLICE_HOURS = 1 // long catch-ups run in slices so PvP sees levels change along the way
 export const ENCOUNTER_LOG_SIZE = 50
 export const ENCOUNTER_DETAIL_SIZE = 10 // the newest encounters that keep their combat log
+// Accounts that get dev tools (e.g. Save to file). Not a security boundary: the save endpoint is dev-server only.
+const DEV_ACCOUNT_IDS = new Set(['379d1f11-f7ac-4e09-ab3c-b51930ba2aa8'])
 
 // Drops the combat log from all but the newest encounters.
 function trimLogs(encounters) {
@@ -30,6 +32,10 @@ export default class Account {
   // Every character in every guild. A getter, so it isn't saved twice.
   get characters() {
     return this.guilds.flatMap((g) => g.characters)
+  }
+
+  get devMode() {
+    return DEV_ACCOUNT_IDS.has(this.id)
   }
 
   // Pays out farming from `lastTick` to `now`, with world PvP in contested zones and dungeon runs along the

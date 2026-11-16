@@ -200,5 +200,10 @@ click('characterClass', 'Warrior'); click('characterSpec', 'Arms')
 submit()
 check('guild required', q('#guildId-error').textContent === 'Choose a guild.', q('#guildId-error').textContent)
 
+go('#/roster')
+const footerButtons = () => qa('.view-footer button').map((b) => b.textContent).join()
+check('no dev tools or reset for players', footerButtons() === '' && !qa('button').some((b) => b.textContent.includes('Reset to default')), footerButtons())
+check('dev mode only for listed accounts', !def.devMode && new Account('Dev', [], 0, [], [], '379d1f11-f7ac-4e09-ab3c-b51930ba2aa8').devMode && !('devMode' in JSON.parse(JSON.stringify(def))))
+
 console.log(fails ? `${fails} FAILED` : 'all passed')
 process.exit(fails ? 1 : 0)

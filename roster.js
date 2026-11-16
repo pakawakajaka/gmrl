@@ -2,7 +2,7 @@ import { badge, el, formatNumber } from './dom.js'
 import { FACTIONS, ROLES } from './data.js'
 import { renderSortControl, sortCharacters } from './sort.js'
 
-export function renderRoster({ account, selectedGuild, sortKey, onSelectGuild, onSort, onReset, onSaveToFile }) {
+export function renderRoster({ account, selectedGuild, sortKey, onSelectGuild, onSort, onSaveToFile }) {
   const guild = account.getGuild(selectedGuild)
   const characters = sortCharacters(guild ? guild.characters : account.characters, sortKey)
   const createHref = guild ? `#/create/${guild.id}` : '#/create'
@@ -29,9 +29,8 @@ export function renderRoster({ account, selectedGuild, sortKey, onSelectGuild, o
       : account.guilds.length
         ? el('p', { class: 'empty' }, 'No characters here yet. ', el('a', { href: createHref }, 'Create one'), '.')
         : el('p', { class: 'empty' }, 'No guilds yet. ', el('a', { href: '#/create-guild' }, 'Create a guild'), ' to add characters.'),
-    el('footer', { class: 'view-footer' },
+    account.devMode && el('footer', { class: 'view-footer' },
       el('button', { type: 'button', class: 'button subtle', onclick: onSaveToFile }, 'Save to file'),
-      el('button', { type: 'button', class: 'button subtle', onclick: onReset }, 'Reset to default data'),
     ),
   )
 }
