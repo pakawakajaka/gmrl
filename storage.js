@@ -1,4 +1,4 @@
-import Account from './account.js'
+import Account, { SAVE_VERSION } from './account.js'
 import Character from './character.js'
 import Guild from './guild.js'
 
@@ -23,27 +23,39 @@ function savedCharacterCount(data) {
 }
 
 // Returns the saved account (or the defaults) and how many saved characters were invalid and dropped,
-// e.g. ones made before the game became Classic-only.
+// e.g. ones made before the game became Classic-only. A save from a newer version of the game (say, an old
+// cached copy of the page) gives `newer: true` and no account: loading it would drop what this version
+// doesn't know about.
 export function loadAccount() {
   try {
     const saved = localStorage.getItem(STORAGE_KEY)
     if (saved) {
       const data = JSON.parse(saved)
+      if (Number(data.saveVersion) > SAVE_VERSION) return { account: null, dropped: 0, newer: true }
       const account = Account.fromJSON(data)
-      return { account, dropped: savedCharacterCount(data) - account.characters.length }
+      return { account, dropped: savedCharacterCount(data) - account.characters.length, newer: false }
     }
   } catch (error) {
     console.warn('Saved data could not be read; using defaults.', error)
   }
-  return { account: createDefaultAccount(), dropped: 0 }
+  return { account: createDefaultAccount(), dropped: 0, newer: false }
 }
 
+// The version of stored save data, from the start of the JSON (Account.toJSON writes it first); 0 if none.
+function storedVersion(json) {
+  return Number(json?.match(/^\{"saveVersion":(\d+)/)?.[1] ?? 0)
+}
+
+// Returns false, without saving, if the stored save is from a newer version of the game (another tab may
+// have loaded the update).
 export function saveAccount(account) {
   try {
+    if (storedVersion(localStorage.getItem(STORAGE_KEY)) > SAVE_VERSION) return false
     localStorage.setItem(STORAGE_KEY, JSON.stringify(account))
   } catch (error) {
     console.error('Could not save changes to localStorage.', error)
   }
+  return true
 }
 
 // Asks the dev server (dev-server.js) to write the save data into the project folder. Returns the file name.

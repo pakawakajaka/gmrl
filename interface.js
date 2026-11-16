@@ -33,6 +33,8 @@ let farmSelectedId = null
 let rosterSort = DEFAULT_SORT
 let farmSort = DEFAULT_SORT
 let lastSave = Date.now()
+let stopped = false // the save is from a newer version of the game: this page must not touch it
+let ticker
 
 function currentView() {
   const [view, id, sub] = location.hash.replace(/^#\/?/, '').split('/')
@@ -40,6 +42,7 @@ function currentView() {
 }
 
 function render() {
+  if (stopped) return
   const { view, id, sub } = currentView()
   const character = view === 'character' ? account.getCharacter(id) : undefined
   const focusKey = document.activeElement?.dataset?.focusKey
@@ -116,8 +119,24 @@ function updateGold() {
 }
 
 function save() {
-  saveAccount(account)
+  if (stopped) return
+  if (!saveAccount(account)) return showNewerSave()
   lastSave = Date.now()
+}
+
+// Stops the game without saving and asks the player to reload, which loads the newer version.
+function showNewerSave() {
+  stopped = true
+  clearInterval(ticker)
+  noticesEl.replaceChildren()
+  goldEl.replaceChildren()
+  document.title = `Update available · ${APP_TITLE}`
+  app.replaceChildren(el('section', { class: 'update-needed', 'aria-labelledby': 'view-title' },
+    el('h2', { id: 'view-title' }, 'Update available'),
+    el('p', {}, 'Your save was made by a newer version of the game. Reload the page to continue.'),
+    el('button', { type: 'button', class: 'button primary', 'data-autofocus': true, onclick: () => location.reload() }, 'Reload'),
+  ))
+  app.querySelector('[data-autofocus]').focus()
 }
 
 function notify(...content) {
@@ -194,6 +213,7 @@ function reportRuns(runs) {
 }
 
 function gameTick() {
+  if (stopped) return
   const { levelUps, upgrades, fights, travels, errands, runs } = account.tick()
   reportLevelUps(levelUps)
   reportTravels(travels)
@@ -281,26 +301,28 @@ async function handleSaveToFile(event) {
 }
 
 // Pay out anything earned while the page was closed.
-const away = account.tick()
-if (away.hours >= 1 / 60 && (away.levelUps.length || away.upgrades.length || away.fights.length || away.runs.length)) {
-  reportFights(away.fights)
-  reportRuns(away.runs)
-  reportUpgrades(away.upgrades)
-  reportTravels(away.travels)
-  reportLevelUps(away.levelUps)
-  const battles = away.fights.filter((f) => f.kind !== 'evade')
-  const kills = battles.reduce((sum, f) => sum + f.honor, 0)
-  const honor = battles.reduce((sum, f) => sum + f.points, 0)
-  const fought = battles.length ? ` Your characters fought ${battles.length} time${battles.length === 1 ? '' : 's'} in contested zones (${kills} honorable kill${kills === 1 ? '' : 's'}${kills ? `, ${formatNumber(Math.floor(honor))} honor` : ''}).` : ''
-  const cleared = away.runs.filter((r) => r.success).length
-  const dungeons = away.runs.length ? ` They ran ${away.runs.length} dungeon${away.runs.length === 1 ? '' : 's'} (${cleared} cleared).` : ''
-  const equipped = away.upgrades.length ? ` Your characters equipped ${away.upgrades.length} new item${away.upgrades.length === 1 ? '' : 's'}.` : ''
-  notify(`Welcome back! You were away for ${formatDuration(away.hours)}.${equipped}${fought}${dungeons}`)
-  save()
-}
-if (loaded.dropped > 0) {
-  notify(`${loaded.dropped} saved character${loaded.dropped === 1 ? '' : 's'} ${loaded.dropped === 1 ? 'was' : 'were'} invalid (non-Classic, or no guild of ${loaded.dropped === 1 ? 'its' : 'their'} faction) and removed.`)
-  save()
+function welcomeBack() {
+  const away = account.tick()
+  if (away.hours >= 1 / 60 && (away.levelUps.length || away.upgrades.length || away.fights.length || away.runs.length)) {
+    reportFights(away.fights)
+    reportRuns(away.runs)
+    reportUpgrades(away.upgrades)
+    reportTravels(away.travels)
+    reportLevelUps(away.levelUps)
+    const battles = away.fights.filter((f) => f.kind !== 'evade')
+    const kills = battles.reduce((sum, f) => sum + f.honor, 0)
+    const honor = battles.reduce((sum, f) => sum + f.points, 0)
+    const fought = battles.length ? ` Your characters fought ${battles.length} time${battles.length === 1 ? '' : 's'} in contested zones (${kills} honorable kill${kills === 1 ? '' : 's'}${kills ? `, ${formatNumber(Math.floor(honor))} honor` : ''}).` : ''
+    const cleared = away.runs.filter((r) => r.success).length
+    const dungeons = away.runs.length ? ` They ran ${away.runs.length} dungeon${away.runs.length === 1 ? '' : 's'} (${cleared} cleared).` : ''
+    const equipped = away.upgrades.length ? ` Your characters equipped ${away.upgrades.length} new item${away.upgrades.length === 1 ? '' : 's'}.` : ''
+    notify(`Welcome back! You were away for ${formatDuration(away.hours)}.${equipped}${fought}${dungeons}`)
+    save()
+  }
+  if (loaded.dropped > 0) {
+    notify(`${loaded.dropped} saved character${loaded.dropped === 1 ? '' : 's'} ${loaded.dropped === 1 ? 'was' : 'were'} invalid (non-Classic, or no guild of ${loaded.dropped === 1 ? 'its' : 'their'} faction) and removed.`)
+    save()
+  }
 }
 
 window.addEventListener('hashchange', () => {
@@ -313,9 +335,17 @@ document.addEventListener('visibilitychange', () => {
 })
 // Another tab saved: take its state, so open tabs don't keep overwriting each other's runs and fights.
 window.addEventListener('storage', (event) => {
-  if (event.key !== STORAGE_KEY || !event.newValue) return
-  account = loadAccount().account
+  if (stopped || event.key !== STORAGE_KEY || !event.newValue) return
+  const next = loadAccount()
+  if (next.newer) return showNewerSave()
+  account = next.account
   if (!app.querySelector('dialog[open]')) render()
 })
-setInterval(gameTick, TICK_MS)
-render()
+
+if (loaded.newer) {
+  showNewerSave()
+} else {
+  welcomeBack()
+  ticker = setInterval(gameTick, TICK_MS)
+  render()
+}

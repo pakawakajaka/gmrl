@@ -10,6 +10,10 @@ const MS_PER_HOUR = 3600 * 1000
 const SLICE_HOURS = 1 // long catch-ups run in slices so PvP sees levels change along the way
 export const ENCOUNTER_LOG_SIZE = 50
 export const ENCOUNTER_DETAIL_SIZE = 10 // the newest encounters that keep their combat log
+// Bump when the save format changes, and upgrade older saves in fromJSON.
+// 1: guilds hold characters. Saves without a saveVersion are from before versioning: either that format or
+//    the older one (account-wide characters, guilds listing characterIds).
+export const SAVE_VERSION = 1
 // Accounts that get dev tools (e.g. Save to file). Not a security boundary: the save endpoint is dev-server only.
 const DEV_ACCOUNT_IDS = new Set(['379d1f11-f7ac-4e09-ab3c-b51930ba2aa8'])
 
@@ -36,6 +40,10 @@ export default class Account {
 
   get devMode() {
     return DEV_ACCOUNT_IDS.has(this.id)
+  }
+
+  toJSON() {
+    return { saveVersion: SAVE_VERSION, ...this }
   }
 
   // Pays out farming from `lastTick` to `now`, with world PvP in contested zones and dungeon runs along the
@@ -209,7 +217,7 @@ export default class Account {
       return true
     }
     const savedGuilds = (Array.isArray(data.guilds) ? data.guilds : []).filter((g) => g && typeof g === 'object')
-    const legacy = Array.isArray(data.characters)
+    const legacy = !(Number(data.saveVersion) >= 1) && Array.isArray(data.characters)
 
     if (legacy) {
       const characters = data.characters.map(restore).filter(Boolean)
