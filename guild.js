@@ -16,6 +16,11 @@ export default class Guild {
     return this.characters.some((c) => c.id === characterId)
   }
 
+  // The guild's money: its characters' gold added up, in copper. Worked out on each call; the guild stores none.
+  totalGold() {
+    return this.characters.reduce((sum, c) => sum + c.copper, 0)
+  }
+
   // Adds the character if it's of the guild's faction. Returns whether it was added.
   add(character) {
     if (character.faction !== this.faction) return false

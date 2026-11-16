@@ -10,8 +10,7 @@ export function renderRoster({ account, selectedGuild, sortKey, onSelectGuild, o
   return el('section', { class: 'roster', 'aria-labelledby': 'view-title' },
     el('div', { class: 'view-header' },
       el('div', {},
-        el('h2', { id: 'view-title' }, guild ? `<${guild.guildName}>` : 'All Characters'),
-        guild && el('p', { class: `sheet-subtitle faction-${guild.faction.toLowerCase()}` }, `${guild.faction} guild`),
+        el('h2', { id: 'view-title', class: guild ? `guild-title faction-${guild.faction.toLowerCase()}` : null }, guild ? `<${guild.guildName}>` : 'All Characters'),
       ),
       el('div', { class: 'sheet-actions' },
         FACTIONS.some((f) => account.canFoundGuild(f)) && el('a', { class: 'button', href: '#/create-guild' }, '+ Create Guild'),
@@ -37,7 +36,7 @@ export function renderRoster({ account, selectedGuild, sortKey, onSelectGuild, o
   )
 }
 
-function renderGuildFilter(account, activeGuild, onSelectGuild) {
+export function renderGuildFilter(account, activeGuild, onSelectGuild) {
   const options = [
     { label: 'All Characters', id: null, count: account.characters.length },
     ...account.guilds.map((g) => ({ label: g.guildName, id: g.id, faction: g.faction, count: g.characters.length })),

@@ -32,20 +32,15 @@ export default class Account {
     return this.guilds.flatMap((g) => g.characters)
   }
 
-  // All characters' money, in copper.
-  get gold() {
-    return this.characters.reduce((sum, c) => sum + c.copper, 0)
-  }
-
   // Pays out farming from `lastTick` to `now`, with world PvP in contested zones and dungeon runs along the
-  // way. Returns what was earned, who leveled up, new gear still worn, the PvP fights (each with the `id` of
-  // its encounter record), moves along leveling paths ({ character, from, to, reason, level }), dungeon quest
-  // pickup trips ({ character, zone, quests, steps }) and dungeon runs (records, see runDungeon).
+  // way. Returns who leveled up, new gear still worn, the PvP fights (each with the `id` of its encounter
+  // record), moves along leveling paths ({ character, from, to, reason, level }), dungeon quest pickup trips
+  // ({ character, zone, quests, steps }) and dungeon runs (records, see runDungeon).
   tick(now = Date.now(), random = Math.random) {
     const hours = Math.max(0, now - this.lastTick) / MS_PER_HOUR
     const start = Math.min(this.lastTick, now)
     this.lastTick = Math.max(this.lastTick, now)
-    const result = { hours, copper: 0, levelUps: [], upgrades: [], fights: [], travels: [], errands: [], runs: [] }
+    const result = { hours, levelUps: [], upgrades: [], fights: [], travels: [], errands: [], runs: [] }
     const leveled = new Set()
     const upgraded = new Map(this.characters.map((c) => [c, new Set()]))
     for (let done = 0; done < hours; done += SLICE_HOURS) {
@@ -58,8 +53,7 @@ export default class Account {
       }
       result.fights.push(...fights)
       for (const character of this.characters) {
-        const { copper, levels, upgrades, travels, errands } = character.farm(slice, now)
-        result.copper += copper
+        const { levels, upgrades, travels, errands } = character.farm(slice, now)
         if (levels > 0) leveled.add(character)
         for (const item of upgrades) upgraded.get(character).add(item)
         for (const travel of travels) result.travels.push({ character, ...travel })
@@ -71,7 +65,6 @@ export default class Account {
         result.runs.push(run.record)
         run.members.forEach((character, i) => {
           const { levels, upgrades, travel } = run.results[i]
-          result.copper += run.record.members[i].copper
           if (levels > 0) leveled.add(character)
           for (const item of upgrades) upgraded.get(character).add(item)
           if (travel) result.travels.push({ character, ...travel })

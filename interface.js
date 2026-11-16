@@ -1,7 +1,7 @@
 import { renderCharacterForm } from './character-form.js'
 import { renderCharacterSheet } from './character-sheet.js'
 import { MAX_LEVEL } from './data.js'
-import { el, formatChance, formatDuration, formatMoney, formatNumber, money } from './dom.js'
+import { el, formatChance, formatDuration, formatNumber } from './dom.js'
 import { renderFarm, updateFarm } from './farm.js'
 import { getItem } from './gear.js'
 import Guild from './guild.js'
@@ -70,8 +70,10 @@ function render() {
   } else if (view === 'farm') {
     app.replaceChildren(renderFarm({
       account,
+      selectedGuild,
       selectedId: farmSelectedId,
       sortKey: farmSort,
+      onSelectGuild: handleSelectGuild,
       onSelect: handleFarmSelect,
       onSort: (key) => { farmSort = key; render() },
       onSend: handleSend,
@@ -107,8 +109,11 @@ function render() {
   else app.querySelector('[data-autofocus]')?.focus()
 }
 
+// Each guild's gold, whole gold only, in its faction's color. There is no account-wide total.
 function updateGold() {
-  goldEl.replaceChildren(money(account.gold))
+  goldEl.replaceChildren(...account.guilds.map((g) =>
+    el('span', { class: `guild-gold faction-${g.faction.toLowerCase()}` }, ' · ', el('strong', {}, g.guildName), ' ',
+      el('span', { class: 'money' }, el('span', { class: 'coin coin-gold' }, `${formatNumber(g.totalGold() / 10000)}g`)))))
 }
 
 function save() {
@@ -287,7 +292,7 @@ function handleReset() {
 
 // Pay out anything earned while the page was closed.
 const away = account.tick()
-if (away.hours >= 1 / 60 && (away.copper >= 1 || away.levelUps.length || away.fights.length || away.runs.length)) {
+if (away.hours >= 1 / 60 && (away.levelUps.length || away.upgrades.length || away.fights.length || away.runs.length)) {
   reportFights(away.fights)
   reportRuns(away.runs)
   reportUpgrades(away.upgrades)
@@ -299,7 +304,8 @@ if (away.hours >= 1 / 60 && (away.copper >= 1 || away.levelUps.length || away.fi
   const fought = battles.length ? ` Your characters fought ${battles.length} time${battles.length === 1 ? '' : 's'} in contested zones (${kills} honorable kill${kills === 1 ? '' : 's'}${kills ? `, ${formatNumber(Math.floor(honor))} honor` : ''}).` : ''
   const cleared = away.runs.filter((r) => r.success).length
   const dungeons = away.runs.length ? ` They ran ${away.runs.length} dungeon${away.runs.length === 1 ? '' : 's'} (${cleared} cleared).` : ''
-  notify(`Welcome back! While you were away for ${formatDuration(away.hours)}, your characters earned ${formatMoney(away.copper)}${away.upgrades.length ? ` and equipped ${away.upgrades.length} new item${away.upgrades.length === 1 ? '' : 's'}` : ''}.${fought}${dungeons}`)
+  const equipped = away.upgrades.length ? ` Your characters equipped ${away.upgrades.length} new item${away.upgrades.length === 1 ? '' : 's'}.` : ''
+  notify(`Welcome back! You were away for ${formatDuration(away.hours)}.${equipped}${fought}${dungeons}`)
   save()
 }
 if (loaded.dropped > 0) {

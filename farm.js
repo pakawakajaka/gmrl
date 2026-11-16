@@ -4,26 +4,30 @@ import { CONTINENTS, ZONES, getZone, zoneDifficulty, zoneLockReason } from './zo
 import { farmRates } from './combat.js'
 import { renderSortControl, sortCharacters } from './sort.js'
 import { routeZone } from './leveling.js'
+import { renderGuildFilter } from './roster.js'
 
-export function renderFarm({ account, selectedId, sortKey, onSelect, onSort, onSend, onRecall }) {
-  const selected = account.getCharacter(selectedId) ?? account.characters[0]
-  const income = account.characters.reduce((sum, c) => sum + c.copperPerHour, 0)
-  const farming = account.characters.filter((c) => c.zone).length
+export function renderFarm({ account, selectedGuild, selectedId, sortKey, onSelectGuild, onSelect, onSort, onSend, onRecall }) {
+  const guild = account.getGuild(selectedGuild)
+  const characters = guild ? guild.characters : account.characters
+  const selected = characters.find((c) => c.id === selectedId) ?? characters[0]
+  const farming = characters.filter((c) => c.zone).length
+  const createHref = guild ? `#/create/${guild.id}` : '#/create'
 
   return el('section', { class: 'farm', 'aria-labelledby': 'view-title' },
     el('div', { class: 'view-header' },
       el('h2', { id: 'view-title' }, 'Farming'),
       el('p', { class: 'farm-income' },
-        `${farming} of ${account.characters.length} farming · Income `, money(income), ' per hour'),
+        `${farming} of ${characters.length} farming`),
     ),
+    renderGuildFilter(account, guild, onSelectGuild),
     selected
       ? [
           el('div', { class: 'list-toolbar' }, renderSortControl(sortKey, onSort)),
           el('ul', { class: 'farm-characters', 'aria-label': 'Characters' },
-            sortCharacters(account.characters, sortKey).map((c) => renderFarmer(c, c === selected, onSelect, onRecall))),
+            sortCharacters(characters, sortKey).map((c) => renderFarmer(c, c === selected, onSelect, onRecall))),
           renderZoneTables(account, selected, onSend, onRecall),
         ]
-      : el('p', { class: 'empty' }, 'No characters to send. ', el('a', { href: '#/create' }, 'Create one'), '.'),
+      : el('p', { class: 'empty' }, 'No characters to send. ', el('a', { href: createHref }, 'Create one'), '.'),
   )
 }
 

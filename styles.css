@@ -90,6 +90,10 @@ a {
   color: var(--text);
 }
 
+.account .guild-gold strong {
+  color: var(--tile-color);
+}
+
 .site-nav {
   display: flex;
   gap: 0.25rem;
@@ -318,7 +322,7 @@ main:has(.farm) {
   border-left: 3px solid var(--tile-color);
 }
 
-.roster .sheet-subtitle {
+.roster .guild-title {
   color: var(--tile-color);
 }
 
