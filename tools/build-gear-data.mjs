@@ -1,6 +1,6 @@
 // Builds gear-data.js from Classic (patch 1.12) source data. Run: node tools/build-gear-data.mjs [dataDir]
 //
-// dataDir (default /tmp/gmrl-data) must contain:
+// dataDir (default ~/gmrl-data) must contain:
 //   classicdb.sql          CMaNGOS classic-db full dump (github.com/cmangos/classic-db)
 //   spell.sql              CMaNGOS mangos-classic sql/base/dbc/original_data/Spell.sql
 //   pfq/units.lua, pfq/quests.lua, pfq/zones.lua, pfq/enUS/zones.lua   from pfQuest (github.com/shagu/pfQuest)
@@ -14,12 +14,13 @@
 // Output: only equippable items that drop from open-world mobs in this game's zones or are rewarded by
 // quests in those zones, their drop tables, those quests, and the player base stats per race/class/level.
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { luaTable, sqlRows } from './parse.mjs'
 import { ZONES } from '../zones.js'
 
-const SRC = process.argv[2] ?? '/tmp/gmrl-data'
+const SRC = process.argv[2] ?? path.join(os.homedir(), 'gmrl-data')
 const OUT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'gear-data.js')
 const read = (file) => fs.readFileSync(path.join(SRC, file), 'utf8')
 

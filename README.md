@@ -11,6 +11,8 @@ This runs `dev-server.js` (live-server on http://127.0.0.1:8080 plus a save endp
 
 This runs every `tests/*-test.mjs` suite (jsdom, no browser needed); `node tests/<name>-test.mjs` runs one and prints its checks.
 
+`tools/` holds dev scripts, each described in its first lines: `build-gear-data.mjs` regenerates `gear-data.js` from source data in `~/gmrl-data` (see the file for what goes there); the `*-sim.mjs`, `measure.mjs` and `sim-baseline.mjs` scripts print balance numbers; `shot.mjs`, `reload-check.mjs` and `tabs-check.mjs` drive headless Chrome.
+
 An account holds guilds, and each guild holds its characters. A guild is Alliance or Horde and only takes characters of that faction; every character belongs to exactly one guild, chosen when it's created. Guilds can't be renamed and characters can't move between guilds. For alpha testing an account can have one guild of each faction (later it will be one guild in all). Use "+ Create Guild" on the roster to found one.
 
 The account is saved in the browser's localStorage (older saves are converted on load). On the roster, "Save to file" writes that data to `gmrl-save.json` in this folder, and "Reset to default data" restores the starting guilds and characters.
