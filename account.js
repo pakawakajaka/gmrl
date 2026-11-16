@@ -8,6 +8,7 @@ import { RUN_LOG_SIZE, autoQueue, formGroups, joinQueue, leaveQueue, restoreRun 
 const ID_PATTERN = /^[\w-]+$/
 const MS_PER_HOUR = 3600 * 1000
 const SLICE_HOURS = 1 // long catch-ups run in slices so PvP sees levels change along the way
+export const MAX_AWAY_HOURS = 30 // time away beyond this isn't paid out
 export const ENCOUNTER_LOG_SIZE = 50
 export const ENCOUNTER_DETAIL_SIZE = 10 // the newest encounters that keep their combat log
 // Bump when the save format changes, and upgrade older saves in fromJSON.
@@ -49,12 +50,14 @@ export default class Account {
   // Pays out farming from `lastTick` to `now`, with world PvP in contested zones and dungeon runs along the
   // way. Returns who leveled up, new gear still worn, the PvP fights (each with the `id` of its encounter
   // record), moves along leveling paths ({ character, from, to, reason, level }), dungeon quest pickup trips
-  // ({ character, zone, quests, steps }) and dungeon runs (records, see runDungeon).
+  // ({ character, zone, quests, steps }) and dungeon runs (records, see runDungeon). Pays out at most the last
+  // MAX_AWAY_HOURS: `awayHours` is the whole time since the last tick, `hours` the part paid out.
   tick(now = Date.now(), random = Math.random) {
-    const hours = Math.max(0, now - this.lastTick) / MS_PER_HOUR
-    const start = Math.min(this.lastTick, now)
+    const awayHours = Math.max(0, now - this.lastTick) / MS_PER_HOUR
+    const hours = Math.min(awayHours, MAX_AWAY_HOURS)
+    const start = now - hours * MS_PER_HOUR
     this.lastTick = Math.max(this.lastTick, now)
-    const result = { hours, levelUps: [], upgrades: [], fights: [], travels: [], errands: [], runs: [] }
+    const result = { awayHours, hours, levelUps: [], upgrades: [], fights: [], travels: [], errands: [], runs: [] }
     const leveled = new Set()
     const upgraded = new Map(this.characters.map((c) => [c, new Set()]))
     for (let done = 0; done < hours; done += SLICE_HOURS) {

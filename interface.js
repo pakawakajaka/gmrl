@@ -13,6 +13,7 @@ import { STORAGE_KEY, loadAccount, saveAccount, saveAccountToFile } from './stor
 import { renderWorldPvp, headline } from './world-pvp.js'
 import { renderDungeons, runHeadline } from './dungeons-view.js'
 import { encounterRecord } from './pvp.js'
+import { MAX_AWAY_HOURS } from './account.js'
 
 const APP_TITLE = 'Guild Master Raid Leader'
 const TICK_MS = 1000
@@ -300,10 +301,11 @@ async function handleSaveToFile(event) {
   }
 }
 
-// Pay out anything earned while the page was closed.
+// Pay out anything earned while the page was closed. Saves record time to the last tick, so a second is the
+// shortest time away we can tell.
 function welcomeBack() {
   const away = account.tick()
-  if (away.hours >= 1 / 60 && (away.levelUps.length || away.upgrades.length || away.fights.length || away.runs.length)) {
+  if (away.awayHours * 3600 >= TICK_MS / 1000) {
     reportFights(away.fights)
     reportRuns(away.runs)
     reportUpgrades(away.upgrades)
@@ -316,7 +318,9 @@ function welcomeBack() {
     const cleared = away.runs.filter((r) => r.success).length
     const dungeons = away.runs.length ? ` They ran ${away.runs.length} dungeon${away.runs.length === 1 ? '' : 's'} (${cleared} cleared).` : ''
     const equipped = away.upgrades.length ? ` Your characters equipped ${away.upgrades.length} new item${away.upgrades.length === 1 ? '' : 's'}.` : ''
-    notify(`Welcome back! You were away for ${formatDuration(away.hours)}.${equipped}${fought}${dungeons}`)
+    const duration = away.awayHours < 1 / 60 ? `${Math.floor(away.awayHours * 3600)}s` : formatDuration(away.awayHours)
+    const capped = away.hours < away.awayHours ? ` Your characters worked for the last ${MAX_AWAY_HOURS} hours of it, the most they can.` : ''
+    notify(`Welcome back! You were away for ${duration}.${capped}${equipped}${fought}${dungeons}`)
     save()
   }
   if (loaded.dropped > 0) {
