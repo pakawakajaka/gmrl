@@ -7,7 +7,9 @@ Guild Master Raid Leader
 
 This runs `dev-server.js` (live-server on http://127.0.0.1:8080 plus a save endpoint) and opens main.html.
 
-Characters and guild memberships are saved in the browser's localStorage. On the roster, "Save to file" writes that data to `gmrl-save.json` in this folder, and "Reset to default data" restores the starting characters.
+An account holds guilds, and each guild holds its characters. A guild is Alliance or Horde and only takes characters of that faction; every character belongs to exactly one guild, chosen when it's created. Guilds can't be renamed and characters can't move between guilds. For alpha testing an account can have one guild of each faction (later it will be one guild in all). Use "+ Create Guild" on the roster to found one.
+
+The account is saved in the browser's localStorage (older saves are converted on load). On the roster, "Save to file" writes that data to `gmrl-save.json` in this folder, and "Reset to default data" restores the starting guilds and characters.
 
 ## Gear
 

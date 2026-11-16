@@ -9,10 +9,17 @@ export function createDefaultAccount() {
   const paka = new Character({ characterName: 'Pakawakajaka', characterClass: 'Shaman', characterSpec: 'Restoration', characterRace: 'Tauren', characterRole: 'Healer' })
   const bassor = new Character({ characterName: 'Bassor', characterClass: 'Paladin', characterSpec: 'Retribution', characterRace: 'Human', characterRole: 'DPS' })
 
-  return new Account('bassor', [trollwarr, paka, bassor], [
-    new Guild('TYMF', [trollwarr.id, paka.id, bassor.id]),
-    new Guild('South Bank Satellites', [bassor.id]),
+  return new Account('bassor', [
+    new Guild({ guildName: 'TYMF', faction: 'Horde', characters: [trollwarr, paka] }),
+    new Guild({ guildName: 'South Bank Satellites', faction: 'Alliance', characters: [bassor] }),
   ])
+}
+
+// How many characters the save data holds, in either save format (see Account.fromJSON).
+function savedCharacterCount(data) {
+  if (Array.isArray(data.characters)) return data.characters.length
+  const guilds = Array.isArray(data.guilds) ? data.guilds : []
+  return guilds.reduce((sum, g) => sum + (Array.isArray(g?.characters) ? g.characters.length : 0), 0)
 }
 
 // Returns the saved account (or the defaults) and how many saved characters were invalid and dropped,
@@ -23,7 +30,7 @@ export function loadAccount() {
     if (saved) {
       const data = JSON.parse(saved)
       const account = Account.fromJSON(data)
-      return { account, dropped: data.characters.length - account.characters.length }
+      return { account, dropped: savedCharacterCount(data) - account.characters.length }
     }
   } catch (error) {
     console.warn('Saved data could not be read; using defaults.', error)

@@ -2,14 +2,21 @@ import Character from './character.js'
 import { badge, el } from './dom.js'
 import { CLASSES, FACTIONS, MIN_LEVEL, RACES, ROLES, classIcon } from './data.js'
 
-const FIELD_ORDER = ['characterName', 'characterRace', 'characterClass', 'characterSpec', 'characterRole']
+const FIELD_ORDER = ['characterName', 'guildId', 'characterRace', 'characterClass', 'characterSpec', 'characterRole']
 
-// Renders the create screen. Characters can't be edited after creation.
-export function renderCharacterForm({ account, onSave }) {
+// Renders the create screen, with `guildId` (if any) preselected. Characters can't be edited after creation.
+export function renderCharacterForm({ account, guildId, onSave }) {
+  if (account.guilds.length === 0) {
+    return el('section', { class: 'character-editor', 'aria-labelledby': 'view-title' },
+      el('div', { class: 'view-header' }, el('h2', { id: 'view-title' }, 'Create Character')),
+      el('p', { class: 'empty' }, 'Characters belong to a guild. ', el('a', { href: '#/create-guild' }, 'Create a guild'), ' first.'),
+    )
+  }
   const level = MIN_LEVEL // new characters always start at level 1
 
-  // Race, class, spec and role can be picked in any order; a pick clears whatever it conflicts with.
+  // Guild, race, class, spec and role can be picked in any order; a pick clears whatever it conflicts with.
   const picks = {
+    guildId: account.getGuild(guildId) ? guildId : '',
     characterRace: '',
     characterClass: '',
     characterSpec: '',
@@ -20,8 +27,20 @@ export function renderCharacterForm({ account, onSave }) {
     id: 'characterName', type: 'text', maxlength: 12, autocomplete: 'off', spellcheck: 'false',
     'data-autofocus': true,
   })
-  const guildBoxes = account.guilds.map((g) =>
-    el('input', { type: 'checkbox', value: g.guildName }))
+
+  const guildPicker = el('div', {},
+    el('div', { class: 'faction-columns' }, FACTIONS.map((faction) => {
+      const guilds = account.guilds.filter((g) => g.faction === faction)
+      return guilds.length > 0 && el('div', { class: `faction faction-${faction.toLowerCase()}` },
+        el('p', { class: 'faction-name' }, faction),
+        el('div', { class: 'tile-grid' }, guilds.map((g) => tile('guildId', g.id, null,
+          el('span', { class: 'tile-text' }, g.guildName,
+            el('small', {}, `${g.characters.length} member${g.characters.length === 1 ? '' : 's'}`))))),
+      )
+    })),
+    el('p', { class: 'field-hint', style: { 'margin-top': '0.5rem' } }, 'Only races of the guild\'s faction can join it. ',
+      FACTIONS.some((f) => account.canFoundGuild(f)) && el('a', { href: '#/create-guild' }, '+ Create Guild')),
+  )
 
   const racePicker = el('div', { class: 'faction-columns' }, FACTIONS.map((faction) =>
     el('div', { class: `faction faction-${faction.toLowerCase()}` },
@@ -41,8 +60,9 @@ export function renderCharacterForm({ account, onSave }) {
   const previewName = el('h3', { class: 'character-name' })
   const previewDetails = el('p')
   const previewBadges = el('p', { class: 'badges' })
+  const previewGuild = el('p', { class: 'guild-tags' })
   const previewCard = el('div', { class: 'character-card' },
-    previewIcon, el('div', { class: 'character-info' }, previewName, previewDetails, previewBadges))
+    previewIcon, el('div', { class: 'character-info' }, previewName, previewDetails, previewBadges, previewGuild))
 
   // Spec tiles depend on the class, so they're rebuilt whenever the class changes.
   function renderSpecTiles() {
@@ -60,6 +80,8 @@ export function renderCharacterForm({ account, onSave }) {
     const p = { ...picks, [group]: value }
     const race = RACES[p.characterRace]
     const cls = CLASSES[p.characterClass]
+    const guild = account.getGuild(p.guildId)
+    if (guild && race && race.faction !== guild.faction) return false
     if (race && cls && !race.classes.includes(p.characterClass)) return false
     if (cls && p.characterRole && !cls.roles.includes(p.characterRole)) return false
     const specRoles = cls && Object.hasOwn(cls.specs, p.characterSpec) ? cls.specs[p.characterSpec] : null
@@ -69,7 +91,15 @@ export function renderCharacterForm({ account, onSave }) {
   function pick(group, value) {
     const p = picks
     p[group] = value
+    const guild = account.getGuild(p.guildId)
+    if (guild && p.characterRace && RACES[p.characterRace].faction !== guild.faction) {
+      p[group === 'guildId' ? 'characterRace' : 'guildId'] = ''
+    }
     const race = RACES[p.characterRace]
+    if (race && !p.guildId) {
+      const fitting = account.guilds.filter((g) => g.faction === race.faction)
+      if (fitting.length === 1) p.guildId = fitting[0].id
+    }
     if (race && p.characterClass && !race.classes.includes(p.characterClass)) {
       p[group === 'characterRace' ? 'characterClass' : 'characterRace'] = ''
     }
@@ -107,6 +137,8 @@ export function renderCharacterForm({ account, onSave }) {
     previewName.textContent = Character.formatName(nameInput.value) || 'Unnamed hero'
     previewDetails.textContent = ['Level', level, race, spec, cls].filter(Boolean).join(' ')
     previewBadges.replaceChildren(...[role, race && RACES[race].faction].filter(Boolean).map(badge))
+    const guild = account.getGuild(picks.guildId)
+    previewGuild.textContent = guild ? `<${guild.guildName}>` : 'No guild chosen'
   }
 
   function showError(key, message) {
@@ -141,14 +173,21 @@ export function renderCharacterForm({ account, onSave }) {
 
   function handleSubmit(event) {
     event.preventDefault()
+    const { guildId: chosenGuild, ...choices } = picks
     const values = {
-      ...picks,
+      ...choices,
       characterName: nameInput.value.trim(),
       characterLevel: level,
     }
     const errors = Character.validate(values)
     if (!errors.characterName && account.isNameTaken(values.characterName)) {
       errors.characterName = `You already have a character named ${Character.formatName(values.characterName)}.`
+    }
+    if (!account.getGuild(chosenGuild)) {
+      const faction = RACES[values.characterRace]?.faction
+      errors.guildId = faction && !account.guilds.some((g) => g.faction === faction)
+        ? `You have no ${faction} guild yet. Create one first.`
+        : 'Choose a guild.'
     }
 
     for (const key of FIELD_ORDER) showError(key, errors[key])
@@ -161,22 +200,18 @@ export function renderCharacterForm({ account, onSave }) {
       return
     }
 
-    const guildNames = guildBoxes.filter((box) => box.checked).map((box) => box.value)
-    onSave(new Character(values), guildNames)
+    onSave(new Character(values), chosenGuild)
   }
 
   const form = el('form', { class: 'character-form', novalidate: true, onsubmit: handleSubmit, oninput: handleInput, onchange: handleChange, onclick: handleClick },
     el('div', { class: 'form-fields' },
       field('Name', nameInput, '2 to 12 letters, no spaces.'),
-      el('p', { class: 'field-hint' }, 'Pick race, class, spec and role in any order. Click a selected option again to clear it. Dimmed options don\'t fit your other picks; choosing one clears the conflict.'),
+      el('p', { class: 'field-hint' }, 'Pick guild, race, class, spec and role in any order. Click a selected option again to clear it. Dimmed options don\'t fit your other picks; choosing one clears the conflict.'),
+      pickerField('guildId', 'Guild', guildPicker),
       pickerField('characterRace', 'Race', racePicker),
       pickerField('characterClass', 'Class', classPicker),
       pickerField('characterSpec', 'Spec', specPicker),
       pickerField('characterRole', 'Role', rolePicker),
-      guildBoxes.length > 0 && el('fieldset', { class: 'field' },
-        el('legend', { class: 'field-label' }, 'Guilds'),
-        guildBoxes.map((box) => el('label', { class: 'checkbox' }, box, box.value)),
-      ),
       el('div', { class: 'form-actions' },
         el('button', { type: 'submit', class: 'button primary' }, 'Create Character'),
         el('a', { class: 'button', href: '#/roster' }, 'Cancel'),
@@ -194,20 +229,20 @@ export function renderCharacterForm({ account, onSave }) {
   return el('section', { class: 'character-editor', 'aria-labelledby': 'view-title' },
     el('div', { class: 'view-header' },
       el('h2', { id: 'view-title' }, 'Create Character'),
-      el('p', { class: 'field-hint' }, `New characters start at level ${MIN_LEVEL}. Send them farming to level up. Name, race, class, spec, role and guilds can't be changed later.`),
+      el('p', { class: 'field-hint' }, `New characters start at level ${MIN_LEVEL}. Send them farming to level up. Name, guild, race, class, spec and role can't be changed later.`),
     ),
     form,
   )
 }
 
-function tile(group, value, style, ...content) {
+export function tile(group, value, style, ...content) {
   return el('label', { class: 'tile', style },
     el('input', { type: 'radio', name: group, value, class: 'visually-hidden' }),
     el('span', { class: 'tile-body' }, content),
   )
 }
 
-function pickerField(key, legend, picker) {
+export function pickerField(key, legend, picker) {
   return el('fieldset', { class: 'field', id: key, 'aria-describedby': `${key}-error` },
     el('legend', { class: 'field-label' }, legend),
     picker,
@@ -215,7 +250,7 @@ function pickerField(key, legend, picker) {
   )
 }
 
-function field(label, control, hint) {
+export function field(label, control, hint) {
   const hintId = `${control.id}-hint`
   const errorId = `${control.id}-error`
   control.setAttribute('aria-describedby', hint ? `${hintId} ${errorId}` : errorId)

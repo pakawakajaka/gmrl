@@ -4,6 +4,8 @@ import { MAX_LEVEL } from './data.js'
 import { el, formatChance, formatDuration, formatMoney, formatNumber, money } from './dom.js'
 import { renderFarm, updateFarm } from './farm.js'
 import { getItem } from './gear.js'
+import Guild from './guild.js'
+import { renderGuildForm } from './guild-form.js'
 import { renderRoster } from './roster.js'
 import { DEFAULT_SORT } from './sort.js'
 import { renderTalents } from './talents-view.js'
@@ -26,7 +28,7 @@ const noticesEl = document.getElementById('notices')
 
 const loaded = loadAccount()
 let account = loaded.account
-let selectedGuild = null
+let selectedGuild = null // a guild id, or null for all guilds
 let farmSelectedId = null
 let rosterSort = DEFAULT_SORT
 let farmSort = DEFAULT_SORT
@@ -62,7 +64,9 @@ function render() {
       onLeaveQueue: () => handleLeaveQueue(character.id),
     }))
   } else if (view === 'create') {
-    app.replaceChildren(renderCharacterForm({ account, onSave: handleSave }))
+    app.replaceChildren(renderCharacterForm({ account, guildId: id, onSave: handleSave }))
+  } else if (view === 'create-guild') {
+    app.replaceChildren(renderGuildForm({ account, onSave: handleCreateGuild }))
   } else if (view === 'farm') {
     app.replaceChildren(renderFarm({
       account,
@@ -202,14 +206,23 @@ function gameTick() {
   if (Date.now() - lastSave >= SAVE_EVERY_MS) save()
 }
 
-function handleSave(character, guildNames) {
-  account.addCharacter(character, guildNames)
+function handleSave(character, guildId) {
+  if (!account.addCharacter(character, guildId)) return
   save()
   location.hash = '#/roster'
 }
 
-function handleSelectGuild(guildName) {
-  selectedGuild = guildName
+function handleCreateGuild({ guildName, faction }) {
+  const guild = new Guild({ guildName, faction })
+  if (!account.addGuild(guild)) return
+  selectedGuild = guild.id
+  save()
+  notify(`${guild.guildName} (${faction}) was founded.`)
+  location.hash = '#/roster'
+}
+
+function handleSelectGuild(guildId) {
+  selectedGuild = guildId
   render()
   app.querySelector('.chip[aria-pressed="true"]')?.focus()
 }
@@ -290,7 +303,7 @@ if (away.hours >= 1 / 60 && (away.copper >= 1 || away.levelUps.length || away.fi
   save()
 }
 if (loaded.dropped > 0) {
-  notify(`${loaded.dropped} saved character${loaded.dropped === 1 ? '' : 's'} used non-Classic races, classes or levels and ${loaded.dropped === 1 ? 'was' : 'were'} removed. Use "Reset to default data" on the Roster to restore the starting characters.`)
+  notify(`${loaded.dropped} saved character${loaded.dropped === 1 ? '' : 's'} ${loaded.dropped === 1 ? 'was' : 'were'} invalid (non-Classic, or no guild of ${loaded.dropped === 1 ? 'its' : 'their'} faction) and removed. Use "Reset to default data" on the Roster to restore the starting characters.`)
   save()
 }
 

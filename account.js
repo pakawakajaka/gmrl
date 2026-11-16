@@ -16,16 +16,20 @@ function trimLogs(encounters) {
   for (const e of encounters.slice(ENCOUNTER_DETAIL_SIZE)) e.log = null
 }
 
+// Account -> guilds -> characters. Each guild is of one faction and every character is in exactly one guild.
 export default class Account {
-  // `gold` (copper) is old account-wide money from before characters kept their own; it's split evenly.
-  constructor(accountName, characters = [], guilds = [], gold = 0, lastTick = Date.now(), encounters = [], dungeonRuns = []) {
+  constructor(accountName, guilds = [], lastTick = Date.now(), encounters = [], dungeonRuns = [], id = crypto.randomUUID()) {
+    this.id = id
     this.accountName = accountName
-    this.characters = characters
     this.guilds = guilds
-    for (const character of characters) character.copper += gold / characters.length
     this.lastTick = lastTick // ms timestamp up to which farming has been paid out
     this.encounters = encounters // world PvP, newest first: see encounterRecord in pvp.js
     this.dungeonRuns = dungeonRuns // newest first: see runDungeon in dungeons.js
+  }
+
+  // Every character in every guild. A getter, so it isn't saved twice.
+  get characters() {
+    return this.guilds.flatMap((g) => g.characters)
   }
 
   // All characters' money, in copper.
@@ -121,12 +125,12 @@ export default class Account {
     return this.characters.find((c) => c.id === id)
   }
 
-  getGuild(guildName) {
-    return this.guilds.find((g) => g.guildName === guildName)
+  getGuild(id) {
+    return this.guilds.find((g) => g.id === id)
   }
 
-  guildsOf(characterId) {
-    return this.guilds.filter((g) => g.has(characterId))
+  guildOf(characterId) {
+    return this.guilds.find((g) => g.has(characterId))
   }
 
   isNameTaken(name) {
@@ -134,58 +138,123 @@ export default class Account {
     return this.characters.some((c) => c.characterName.toLowerCase() === wanted)
   }
 
-  // Adds a new character and puts it in exactly `guildNames`. New characters always start at level 1
-  // with no XP or gear. Characters can't be edited after creation.
-  addCharacter(character, guildNames, now = Date.now()) {
+  isGuildNameTaken(name) {
+    const wanted = Guild.formatName(name).toLowerCase()
+    return this.guilds.some((g) => g.guildName.toLowerCase() === wanted)
+  }
+
+  // For alpha testing an account may have one guild per faction. Later it will be one guild in all.
+  canFoundGuild(faction) {
+    return !this.guilds.some((g) => g.faction === faction)
+  }
+
+  // Adds a new, empty guild. Returns false if it's invalid, its name is taken or the account already has a
+  // guild of its faction. Guilds can't be renamed and characters can't move between guilds.
+  addGuild(guild) {
+    if (Object.keys(Guild.validate(guild)).length > 0 || this.isGuildNameTaken(guild.guildName)) return false
+    if (!this.canFoundGuild(guild.faction)) return false
+    if (this.getGuild(guild.id)) return false
+    guild.guildName = Guild.formatName(guild.guildName)
+    this.guilds.push(guild)
+    return true
+  }
+
+  // Adds a new character to the guild. New characters always start at level 1 with no XP or gear.
+  // Characters can't be edited after creation. Returns false if there's no such guild or it's of the
+  // other faction.
+  addCharacter(character, guildId, now = Date.now()) {
+    const guild = this.getGuild(guildId)
+    if (!guild || guild.faction !== character.faction) return false
     this.tick(now)
     character.characterLevel = MIN_LEVEL
     character.characterXp = 0
     character.talents = {}
     character.zone = null
-    this.characters.push(character)
-
-    for (const guild of this.guilds) {
-      if (guildNames.includes(guild.guildName)) guild.add(character.id)
-    }
+    return guild.add(character)
   }
 
   deleteCharacter(id) {
-    this.characters = this.characters.filter((c) => c.id !== id)
     for (const guild of this.guilds) guild.remove(id)
   }
 
   // Rebuilds an Account from untrusted saved data, dropping anything invalid.
+  // Reads both the current format (guilds holding characters) and the old one (account-wide characters with
+  // guilds listing characterIds; an old guild takes its members' majority faction).
   static fromJSON(data, now = Date.now()) {
-    const characters = data.characters
-      .filter((c) => typeof c.id === 'string' && ID_PATTERN.test(c.id))
-      .map((c) => ({ ...c, characterSpec: c.characterSpec ?? defaultSpec(c.characterClass, c.characterRole) }))
-      .filter((c) => Object.keys(Character.validate(c)).length === 0)
-      .map((c) => {
-        const character = new Character({ ...c, characterXp: 0, zone: null, copper: 0, spells: undefined, talents: {}, equipment: {}, bag: [], questsDone: [], questLog: {}, timeBank: 0, lootLog: [], honorableKills: 0, honor: 0, honorToday: null, pvpKills: 0, pvpDeaths: 0, pvpLog: [], pvpReadyAt: 0, hearthReadyAt: 0, dungeonQuests: [], dungeonQueue: null, dungeonClears: {}, queueDeclined: null })
-        const xp = Number(c.characterXp)
-        if (Number.isFinite(xp) && xp > 0 && xp < character.xpToNextLevel) character.characterXp = xp
-        if (!zoneLockReason(character, getZone(c.zone))) character.zone = c.zone
-        character.restoreGear(c)
-        return character
-      })
-    const ids = new Set(characters.map((c) => c.id))
-    const guilds = data.guilds.map(
-      (g) => new Guild(String(g.guildName), g.characterIds.filter((id) => ids.has(id))),
-    )
-    // Saves from before characters kept their own money have account-wide gold instead.
-    const gold = data.characters.some((c) => c?.copper !== undefined) ? 0 : Number(data.gold)
+    const seen = new Set()
+    const restore = (saved) => {
+      if (!saved || typeof saved.id !== 'string' || !ID_PATTERN.test(saved.id) || seen.has(saved.id)) return null
+      const c = { ...saved, characterSpec: saved.characterSpec ?? defaultSpec(saved.characterClass, saved.characterRole) }
+      if (Object.keys(Character.validate(c)).length > 0) return null
+      seen.add(c.id)
+      const character = new Character({ ...c, characterXp: 0, zone: null, copper: 0, spells: undefined, talents: {}, equipment: {}, bag: [], questsDone: [], questLog: {}, timeBank: 0, lootLog: [], honorableKills: 0, honor: 0, honorToday: null, pvpKills: 0, pvpDeaths: 0, pvpLog: [], pvpReadyAt: 0, hearthReadyAt: 0, dungeonQuests: [], dungeonQueue: null, dungeonClears: {}, queueDeclined: null })
+      const xp = Number(c.characterXp)
+      if (Number.isFinite(xp) && xp > 0 && xp < character.xpToNextLevel) character.characterXp = xp
+      if (!zoneLockReason(character, getZone(c.zone))) character.zone = c.zone
+      character.restoreGear(c)
+      return character
+    }
+
+    const guilds = []
+    const homeless = []
+    const nameTaken = (name) => guilds.some((g) => g.guildName.toLowerCase() === name.toLowerCase())
+    // Keeps the guild if it's valid, its name is free and its faction has no guild yet (see canFoundGuild);
+    // a clashing id gets a new one.
+    const keep = (guild) => {
+      if (Object.keys(Guild.validate(guild)).length > 0 || nameTaken(guild.guildName)) return false
+      if (guilds.some((g) => g.faction === guild.faction)) return false
+      if (typeof guild.id !== 'string' || !ID_PATTERN.test(guild.id) || guilds.some((g) => g.id === guild.id)) {
+        guild.id = crypto.randomUUID()
+      }
+      guilds.push(guild)
+      return true
+    }
+    const savedGuilds = (Array.isArray(data.guilds) ? data.guilds : []).filter((g) => g && typeof g === 'object')
+    const legacy = Array.isArray(data.characters)
+
+    if (legacy) {
+      const characters = data.characters.map(restore).filter(Boolean)
+      const members = new Map()
+      for (const g of savedGuilds) {
+        const ids = new Set(Array.isArray(g.characterIds) ? g.characterIds : [])
+        const counts = {}
+        for (const c of characters) if (ids.has(c.id)) counts[c.faction] = (counts[c.faction] ?? 0) + 1
+        const faction = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0]
+        const guild = new Guild({ guildName: Guild.formatName(g.guildName), faction })
+        if (keep(guild)) members.set(guild, ids)
+      }
+      for (const c of characters) {
+        const home = guilds.find((g) => g.faction === c.faction && members.get(g).has(c.id))
+        if (home) home.add(c)
+        else homeless.push(c)
+      }
+      // Saves from before characters kept their own money have account-wide gold instead.
+      const gold = data.characters.some((c) => c?.copper !== undefined) ? 0 : Number(data.gold)
+      if (Number.isFinite(gold) && gold > 0) for (const c of characters) c.copper += gold / characters.length
+    } else {
+      for (const g of savedGuilds) {
+        const characters = (Array.isArray(g.characters) ? g.characters : []).map(restore).filter(Boolean)
+        const guild = new Guild({ id: g.id, guildName: Guild.formatName(g.guildName), faction: g.faction })
+        if (!keep(guild)) homeless.push(...characters)
+        else for (const c of characters) if (!guild.add(c)) homeless.push(c)
+      }
+    }
+
+    // Characters whose guild was dropped (invalid, or a second guild of its faction) or of the other faction
+    // join the account's guild of their faction. No guild is made for them; without one they're dropped.
+    for (const c of homeless) guilds.find((g) => g.faction === c.faction)?.add(c)
+
     const lastTick = Number(data.lastTick)
     const encounters = (Array.isArray(data.encounters) ? data.encounters.slice(0, ENCOUNTER_LOG_SIZE) : []).map(restoreEncounter).filter(Boolean)
     trimLogs(encounters)
     const runs = (Array.isArray(data.dungeonRuns) ? data.dungeonRuns.slice(0, RUN_LOG_SIZE) : []).map(restoreRun).filter(Boolean)
     return new Account(
       String(data.accountName),
-      characters,
       guilds,
-      Number.isFinite(gold) && gold > 0 ? gold : 0,
       Number.isFinite(lastTick) && lastTick > 0 ? Math.min(lastTick, now) : now,
       encounters,
       runs,
+      typeof data.id === 'string' && ID_PATTERN.test(data.id) ? data.id : undefined,
     )
   }
 }

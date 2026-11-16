@@ -1,15 +1,24 @@
 import { badge, el, formatNumber } from './dom.js'
-import { ROLES } from './data.js'
+import { FACTIONS, ROLES } from './data.js'
 import { renderSortControl, sortCharacters } from './sort.js'
 
 export function renderRoster({ account, selectedGuild, sortKey, onSelectGuild, onSort, onReset, onSaveToFile }) {
   const guild = account.getGuild(selectedGuild)
-  const characters = sortCharacters(guild ? account.characters.filter((c) => guild.has(c.id)) : account.characters, sortKey)
+  const characters = sortCharacters(guild ? guild.characters : account.characters, sortKey)
+  const createHref = guild ? `#/create/${guild.id}` : '#/create'
 
   return el('section', { class: 'roster', 'aria-labelledby': 'view-title' },
     el('div', { class: 'view-header' },
-      el('h2', { id: 'view-title' }, guild ? `<${guild.guildName}>` : 'All Characters'),
-      el('a', { class: 'button primary', href: '#/create' }, '+ Create Character'),
+      el('div', {},
+        el('h2', { id: 'view-title' }, guild ? `<${guild.guildName}>` : 'All Characters'),
+        guild && el('p', { class: `sheet-subtitle faction-${guild.faction.toLowerCase()}` }, `${guild.faction} guild`),
+      ),
+      el('div', { class: 'sheet-actions' },
+        FACTIONS.some((f) => account.canFoundGuild(f)) && el('a', { class: 'button', href: '#/create-guild' }, '+ Create Guild'),
+        account.guilds.length
+          ? el('a', { class: 'button primary', href: createHref }, '+ Create Character')
+          : el('button', { type: 'button', class: 'button primary', disabled: true, title: 'Create a guild first.' }, '+ Create Character'),
+      ),
     ),
     renderGuildFilter(account, guild, onSelectGuild),
     el('div', { class: 'list-toolbar' },
@@ -18,7 +27,9 @@ export function renderRoster({ account, selectedGuild, sortKey, onSelectGuild, o
     ),
     characters.length
       ? el('ul', { class: 'character-list' }, characters.map((c) => renderCharacterCard(c, account)))
-      : el('p', { class: 'empty' }, 'No characters here yet. ', el('a', { href: '#/create' }, 'Create one'), '.'),
+      : account.guilds.length
+        ? el('p', { class: 'empty' }, 'No characters here yet. ', el('a', { href: createHref }, 'Create one'), '.')
+        : el('p', { class: 'empty' }, 'No guilds yet. ', el('a', { href: '#/create-guild' }, 'Create a guild'), ' to add characters.'),
     el('footer', { class: 'view-footer' },
       el('button', { type: 'button', class: 'button subtle', onclick: onSaveToFile }, 'Save to file'),
       el('button', { type: 'button', class: 'button subtle', onclick: onReset }, 'Reset to default data'),
@@ -28,15 +39,16 @@ export function renderRoster({ account, selectedGuild, sortKey, onSelectGuild, o
 
 function renderGuildFilter(account, activeGuild, onSelectGuild) {
   const options = [
-    { label: 'All Characters', guildName: null, count: account.characters.length },
-    ...account.guilds.map((g) => ({ label: g.guildName, guildName: g.guildName, count: g.characterIds.length })),
+    { label: 'All Characters', id: null, count: account.characters.length },
+    ...account.guilds.map((g) => ({ label: g.guildName, id: g.id, faction: g.faction, count: g.characters.length })),
   ]
   return el('nav', { class: 'guild-filter', 'aria-label': 'Filter by guild' },
     options.map((option) => el('button', {
       type: 'button',
-      class: 'chip',
-      'aria-pressed': String((activeGuild?.guildName ?? null) === option.guildName),
-      onclick: () => onSelectGuild(option.guildName),
+      class: option.faction ? `chip guild-chip faction-${option.faction.toLowerCase()}` : 'chip',
+      title: option.faction ? `${option.faction} guild` : null,
+      'aria-pressed': String((activeGuild?.id ?? null) === option.id),
+      onclick: () => onSelectGuild(option.id),
     }, option.label, el('span', { class: 'count' }, String(option.count)))),
   )
 }
@@ -51,7 +63,7 @@ function renderRoleSummary(characters) {
 }
 
 function renderCharacterCard(character, account) {
-  const guildNames = account.guildsOf(character.id).map((g) => `<${g.guildName}>`)
+  const guild = account.guildOf(character.id)
 
   return el('li', {},
     el('a', { class: 'character-card card-link', href: `#/character/${character.id}`, style: { '--class-color': character.classColor } },
@@ -61,7 +73,7 @@ function renderCharacterCard(character, account) {
         el('p', {}, `Level ${character.characterLevel} ${character.characterRace} ${character.characterSpec} ${character.characterClass}`),
         el('p', { class: 'badges' }, badge(character.characterRole), badge(character.faction)),
         el('p', { class: 'farm-status' }, `Power level ${formatNumber(Math.round(character.power.solo))} · Item level ${formatNumber(character.itemLevel)}`),
-        el('p', { class: 'guild-tags' }, guildNames.length ? guildNames.join(', ') : 'No guild'),
+        el('p', { class: 'guild-tags' }, guild ? `<${guild.guildName}>` : 'No guild'),
         el('p', { class: 'farm-status' }, character.zone ? `Farming in ${character.zone}` : 'Idle'),
       ),
     ),

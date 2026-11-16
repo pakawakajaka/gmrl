@@ -245,8 +245,13 @@ main:has(.farm) {
   color: #1a1408;
 }
 
-.button.primary:hover {
+.button.primary:not(:disabled):hover {
   background: #ffc654;
+}
+
+.button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .button.danger {
@@ -306,6 +311,15 @@ main:has(.farm) {
   border-radius: 999px;
   background: var(--surface-raised);
   font-size: 0.75rem;
+}
+
+/* A guild's faction shows as the chip's left edge and the roster subtitle color. */
+.guild-chip {
+  border-left: 3px solid var(--tile-color);
+}
+
+.roster .sheet-subtitle {
+  color: var(--tile-color);
 }
 
 .role-summary {
@@ -542,6 +556,10 @@ input[type="number"] {
 .faction-alliance { --tile-color: var(--alliance); }
 .faction-horde { --tile-color: var(--horde); }
 
+.faction-picker {
+  grid-template-columns: 1fr 1fr;
+}
+
 .faction-name {
   margin-bottom: 0.4rem;
   font-size: 0.75rem;
@@ -607,6 +625,10 @@ input[type="number"] {
 
 .tile.unavailable .tile-body {
   opacity: 0.35;
+}
+
+.tile:has(input:disabled) {
+  cursor: not-allowed;
 }
 
 .tile.unavailable:hover .tile-body {

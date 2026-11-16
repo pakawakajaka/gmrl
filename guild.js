@@ -1,18 +1,45 @@
+import { FACTIONS } from './data.js'
+
+const NAME_PATTERN = /^[A-Za-z]+( [A-Za-z]+)*$/
+export const GUILD_NAME_MAX = 24
+
+// A guild of one faction. It owns its characters; every character is in exactly one guild.
 export default class Guild {
-  constructor(guildName, characterIds = []) {
+  constructor({ id = crypto.randomUUID(), guildName, faction, characters = [] }) {
+    this.id = id
     this.guildName = guildName
-    this.characterIds = characterIds
+    this.faction = faction // 'Alliance' or 'Horde'; only that faction's characters can join
+    this.characters = characters
   }
 
   has(characterId) {
-    return this.characterIds.includes(characterId)
+    return this.characters.some((c) => c.id === characterId)
   }
 
-  add(characterId) {
-    if (!this.has(characterId)) this.characterIds.push(characterId)
+  // Adds the character if it's of the guild's faction. Returns whether it was added.
+  add(character) {
+    if (character.faction !== this.faction) return false
+    if (!this.has(character.id)) this.characters.push(character)
+    return true
   }
 
   remove(characterId) {
-    this.characterIds = this.characterIds.filter((id) => id !== characterId)
+    this.characters = this.characters.filter((c) => c.id !== characterId)
+  }
+
+  // Trims and collapses runs of spaces.
+  static formatName(name) {
+    return String(name ?? '').trim().replace(/\s+/g, ' ')
+  }
+
+  // Returns { field: message } for each invalid field; empty object when valid.
+  static validate({ guildName, faction }) {
+    const errors = {}
+    const name = Guild.formatName(guildName)
+    if (name.length < 2 || name.length > GUILD_NAME_MAX || !NAME_PATTERN.test(name)) {
+      errors.guildName = `Name must be 2 to ${GUILD_NAME_MAX} letters (A to Z) and single spaces.`
+    }
+    if (!FACTIONS.includes(faction)) errors.faction = 'Choose a faction.'
+    return errors
   }
 }
