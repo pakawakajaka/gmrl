@@ -8,6 +8,7 @@ const { default: Account } = await import(root + 'account.js')
 const { accountOf, addTo, savedCharacters } = await import('./helpers.mjs')
 const { DUNGEON_QUESTS, getQuest } = await import(root + 'gear.js')
 const D = await import(root + 'dungeons.js')
+const { zoneValue } = await import(root + 'leveling.js')
 const { renderDungeons } = await import(root + 'dungeons-view.js')
 const { renderCharacterSheet } = await import(root + 'character-sheet.js')
 let fails = 0
@@ -53,15 +54,27 @@ check('quest log still capped at 5', Object.keys(runner.questLog).length <= 5)
 check('nothing left to pick up after a while', D.pendingQuests(runner).size === 0 || runner.plannedAction?.errand === undefined || true)
 check('held quests are real dungeon quests', runner.dungeonQuests.every((id) => D.isDungeonQuest(id)))
 
-// Auto queue.
+// Auto queue: it picks up quests while farming, then (back in a zone it has outgrown) makes the pickup trips
+// worth making there and queues for the dungeons that beat farming.
 const queuer = make(HORDE[3], 20, 'The Barrens')
 queuer.farm(6, start)
+const zoneWorth = zoneValue(queuer, queuer.zone)
+check('skips trips not worth the farming they cost', D.wantedQuests(queuer).size > D.errandTrips(queuer).size &&
+  [...D.errandTrips(queuer).values()].every((t) => t.value >= (2 * zoneWorth * t.seconds) / 3600), queuer.zone)
+queuer.zone = 'Durotar'
+check('cheap farming makes trips worth it', D.errandTrips(queuer).size > 0)
+for (let i = 0; i < 20 && D.nextErrand(queuer); i++) {
+  queuer.farm(0.25, start)
+  queuer.zone = 'Durotar'
+}
+check('no trips left', !D.nextErrand(queuer))
 D.autoQueue(queuer, start)
-check('queues once quests are picked up', D.pendingQuests(queuer).size > 0 || queuer.dungeonQueue?.dungeons.length > 0, JSON.stringify(queuer.dungeonQueue))
+check('queues once trips are made', queuer.dungeonQueue?.dungeons.length > 0, JSON.stringify(queuer.dungeonQueue))
+check('queues for what beats farming', queuer.dungeonQueue?.dungeons.join() === D.autoDungeons(queuer).map((d) => d.name).join())
 check('queue has in-range dungeons only', queuer.dungeonQueue.dungeons.every((name) => D.inRange(queuer, D.getDungeon(name))))
-check('most quests held first', (() => {
-  const held = queuer.dungeonQueue.dungeons.map((name) => D.heldQuests(queuer, name).length)
-  return held.every((h, i) => i === 0 || held[i - 1] >= h)
+check('most worth first', (() => {
+  const values = queuer.dungeonQueue.dungeons.map((name) => D.dungeonValue(queuer, D.getDungeon(name)))
+  return values.every((v, i) => i === 0 || values[i - 1] >= v)
 })())
 D.leaveQueue(queuer)
 D.autoQueue(queuer, start)
@@ -77,20 +90,24 @@ const idle = make(HORDE[4], 20)
 D.autoQueue(idle, start)
 check('idle characters don\'t auto queue', idle.dungeonQueue === null)
 
-// Grouping.
+// Grouping. Naked level 20s are too weak for Wailing Caverns; level 24s can clear it.
 const group = (specs, level, zone = 'The Barrens') => specs.map((s) => make(s, level, zone))
-const four = group(HORDE.slice(0, 4), 20)
+const four = group(HORDE.slice(0, 4), 24)
 for (const c of four) D.joinQueue(c, 'Wailing Caverns', start)
 check('4 queued: no run', D.formGroups(four, start).length === 0)
-const mixed = [...four, make(ALLIANCE[0], 20)]
+const mixed = [...four, make(ALLIANCE[0], 24)]
 D.joinQueue(mixed[4], 'Wailing Caverns', start)
 check('4 Horde + 1 Alliance: no run', D.formGroups(mixed, start).length === 0)
-const six = group(HORDE, 20)
-six.forEach((c, i) => D.joinQueue(c, 'Wailing Caverns', start + (i === 0 ? 10 : i)))
+const six = group(HORDE, 24)
+six.forEach((c, i) => D.joinQueue(c, 'Wailing Caverns', start + (i === 5 ? 10 : i)))
 const runs = D.formGroups(six, start + 100, seeded(2))
 check('6 queued: one run of 5', runs.length === 1 && runs[0].members.length === 5)
-check('longest waiting go first', !runs[0].members.includes(six[0]) && six[0].dungeonQueue)
-const owed = group(HORDE.slice(0, 5), 20)
+check('longest waiting go first', !runs[0].members.includes(six[5]) && six[5].dungeonQueue)
+const late = group(HORDE, 24)
+late.forEach((c, i) => D.joinQueue(c, 'Wailing Caverns', start + (i === 0 ? 10 : i)))
+const tanked = D.formGroups(late, start + 100, seeded(2))
+check('the tank goes even when it joined last', tanked.length === 1 && tanked[0].members.includes(late[0]) && !tanked[0].members.includes(late[5]))
+const owed = group(HORDE.slice(0, 5), 24)
 owed.forEach((c) => D.joinQueue(c, 'Wailing Caverns', start))
 owed[0].timeBank = -100
 check('character owed time waits', D.formGroups(owed, start).length === 0)

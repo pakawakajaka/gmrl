@@ -186,7 +186,11 @@ export function sanitizeTalents(cls, level, data) {
 }
 
 // For cache keys.
-export const talentKey = (character) => Object.entries(character.talents ?? {}).map(([k, v]) => k + v).join()
+export function talentKey(character) {
+  let key = ''
+  for (const k in character.talents) key += k + character.talents[k] + ','
+  return key
+}
 
 // ---- Effects ----
 // Spell modifier ops (CMaNGOS SpellModOp) the sim applies; flat or percent.

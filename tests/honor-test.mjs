@@ -7,6 +7,7 @@ const { default: Character } = await import(root + 'character.js')
 const { default: Account } = await import(root + 'account.js')
 const { accountOf, addTo, savedCharacters } = await import('./helpers.mjs')
 const { honorGain, worldPvp } = await import(root + 'pvp.js')
+const { dayOf } = await import(root + 'reset.js')
 const { sortCharacters, SORTS } = await import(root + 'sort.js')
 const { renderCharacterSheet } = await import(root + 'character-sheet.js')
 let fails = 0
@@ -29,9 +30,11 @@ check('60 kills gray 51: 0', honorGain(60, 51) === 0)
 check('30 kills 30: 0.3434', near(honorGain(30, 30), 0.3434 * 188.3))
 check('10 kills 10: 0.1212', near(honorGain(10, 10), 0.1212 * 188.3))
 check('50 vs 49: 0.9545 coeff', near(honorGain(50, 50), 0.9545 * 188.3))
-check('9th same-victim kill: 20%', near(honorGain(60, 60, 8), 188.3 * 0.2))
-check('11th same-victim kill: 0', honorGain(60, 60, 10) === 0)
-check('split 5 ways', near(honorGain(60, 60, 0, 5), 188.3 / 5))
+check('9th same-victim kill: 20%', near(honorGain(60, 60, 0, 8), 188.3 * 0.2))
+check('11th same-victim kill: 0', honorGain(60, 60, 0, 10) === 0)
+check('split 5 ways', near(honorGain(60, 60, 0, 0, 5), 188.3 / 5))
+check('rank 1 victim: 198.6', near(honorGain(60, 60, 1), 188.3 * Math.exp(0.05331)), honorGain(60, 60, 1).toFixed(2))
+check('rank 14 victim: about 2.1x', near(honorGain(60, 60, 14), 188.3 * Math.exp(0.05331 * 14)), honorGain(60, 60, 14).toFixed(2))
 
 // Fights pay honor.
 const SPECS = [
@@ -42,7 +45,7 @@ const SPECS = [
 ]
 const make = ([cls, spec, race, role], level, i) =>
   new Character({ id: `c${i}`, characterName: `${cls}${'ABCDEFGHIJ'[i]}`, characterClass: cls, characterSpec: spec, characterRace: race, characterRole: role, characterLevel: level, zone: 'Hillsbrad Foothills' })
-const noon = Date.UTC(2025, 0, 1, 12)
+const noon = Date.UTC(2025, 0, 1, 17) // noon Eastern; fights from midnight on
 Math.random = seeded(1)
 const chars = SPECS.map((s, i) => make(s, 25 + (i % 3) * 3, i))
 const fights = worldPvp(chars, 12, noon, seeded(1)).filter((f) => f.kind !== 'evade')
@@ -52,15 +55,17 @@ check('fight points add up', near(total, fights.reduce((s, f) => s + f.points, 0
 const logged = chars.flatMap((c) => c.pvpLog.filter((e) => e.honor))
 check('HK log entries carry points', logged.length > 0 && logged.every((e) => e.points > 0))
 check('no more than 10 HKs on one victim a day', chars.every((c) => !c.honorToday || Object.values(c.honorToday.victims).every((n) => n <= 10)))
+check('the day counts HKs and honor', chars.every((c) => c.honorToday === null ? c.honor === 0 : c.honorToday.kills === c.honorableKills && near(c.honorToday.points, c.honor)))
+check('so does the period', chars.every((c) => c.honorPeriod === null ? c.honor === 0 : c.honorPeriod.kills === c.honorableKills && near(c.honorPeriod.points, c.honor)))
 
 // Same victim 10 times today: kills, but no honor.
 let capped = false
 for (let seed = 1; seed < 40 && !capped; seed++) {
   Math.random = seeded(seed)
   const pair = [make(SPECS[0], 60, 0), make(SPECS[5], 60, 5)]
-  const day = Math.floor(noon / 86400000)
-  pair[0].honorToday = { day, victims: { c5: 10 } }
-  pair[1].honorToday = { day, victims: { c0: 10 } }
+  const day = dayOf(noon)
+  pair[0].honorToday = { day, kills: 0, points: 0, victims: { c5: 10 } }
+  pair[1].honorToday = { day, kills: 0, points: 0, victims: { c0: 10 } }
   worldPvp(pair, 12, noon, seeded(seed))
   if (pair.some((c) => c.pvpKills > 0)) {
     capped = true
@@ -85,7 +90,7 @@ savedCharacters(bad)[0].honor = -3
 savedCharacters(bad)[0].honorToday = { day: 'x', victims: {} }
 savedCharacters(bad)[1].honorToday = { day: 5, victims: { a: 99, b: 2, c: 'x' } }
 const fixed = Account.fromJSON(bad, noon).characters
-check('bad honor sanitized', fixed[0].honor === 0 && fixed[0].honorToday === null && JSON.stringify(fixed[1].honorToday) === '{"day":5,"victims":{"b":2}}')
+check('bad honor sanitized', fixed[0].honor === 0 && fixed[0].honorToday === null && JSON.stringify(fixed[1].honorToday) === '{"day":5,"kills":0,"points":0,"victims":{"b":2}}')
 const old = JSON.parse(JSON.stringify(acc))
 for (const c of savedCharacters(old)) { delete c.honor; delete c.honorToday }
 check('old saves start at 0 honor', Account.fromJSON(old, noon).characters.every((c) => c.honor === 0 && c.honorToday === null))
@@ -111,6 +116,18 @@ const list = renderWorldPvp({ account: acc }).textContent
 const listHonor = Math.floor(records.reduce((s, r) => s + r.members.reduce((n, m) => n + m.points, 0), 0))
 check('list shows Honor tally', list.includes(`Honor${listHonor.toLocaleString('en-US')}`), list.match(/Honor\d[\d,]*/)?.[0])
 check('list rows show honor', /honorable kills? \(\d[\d,]* honor\)/.test(list))
+const { periodOf } = await import(root + 'reset.js')
+const saved = acc.characters.map((c) => c.honorPeriod)
+const [leader, ...rest] = acc.characters
+leader.honorPeriod = { period: periodOf(Date.now()), kills: 20, points: 1234.6 }
+for (const c of rest) c.honorPeriod = { period: periodOf(Date.now()), kills: 3, points: 10 }
+const board = renderWorldPvp({ account: acc }).querySelector('.pvp-standings')
+const boardText = board?.textContent ?? ''
+check('standings show the leader first', board?.querySelector('tbody tr th a')?.textContent === leader.characterName && boardText.includes('#1'), boardText.slice(0, 200))
+check('standings show leader honor and kills', boardText.includes('1,234') && boardText.includes('20'))
+check('standings dim characters short of the kills', !rest.length || (board.querySelectorAll('.standings-out').length === rest.length && boardText.includes('3 / 15')))
+check('standings say when the reset is', /Resets in \S/.test(boardText))
+acc.characters.forEach((c, i) => { c.honorPeriod = saved[i] })
 const hkRecord = records.find((r) => r.members.some((m) => m.honor))
 const page = renderWorldPvp({ account: acc, encounterId: hkRecord.id }).textContent
 check('encounter page shows member honor', /\d+ honorable, \d[\d,]* honor\)/.test(page), page.match(/\(\d+ honorable[^)]*\)/)?.[0])

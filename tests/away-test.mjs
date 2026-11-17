@@ -18,7 +18,7 @@ const HOUR = 3600e3
 
 // Account.tick pays out the last MAX_AWAY_HOURS only.
 const now = Date.now() + HOUR
-const sendAll = (acc) => { for (const c of acc.characters) acc.sendToZone(c.id, c.faction === 'Horde' ? 'Durotar' : 'Elwynn Forest') }
+const sendAll = (acc) => { for (const c of acc.characters) acc.sendToZone(c.id, c.faction === 'Horde' ? 'Durotar' : 'Elwynn Forest', acc.lastTick) }
 const xpAfter = (hoursAway) => {
   const acc = createDefaultAccount()
   sendAll(acc)

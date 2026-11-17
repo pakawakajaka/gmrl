@@ -3,7 +3,7 @@ import { MAX_LEVEL } from './data.js'
 import { CONTINENTS, ZONES, getZone, zoneDifficulty, zoneLockReason } from './zones.js'
 import { farmRates } from './combat.js'
 import { renderSortControl, sortCharacters } from './sort.js'
-import { routeZone } from './leveling.js'
+import { LEAVE_START_LEVEL, zoneOptions } from './leveling.js'
 import { renderGuildFilter } from './roster.js'
 
 export function renderFarm({ account, selectedGuild, selectedId, sortKey, onSelectGuild, onSelect, onSort, onSend, onRecall }) {
@@ -61,7 +61,7 @@ function renderFarmer(character, isSelected, onSelect, onRecall) {
         el('span', { class: 'farmer-level' }, `Level ${character.characterLevel} ${character.characterClass}`),
         el('span', { class: 'farmer-level' }, `Power level ${formatNumber(Math.round(character.power.solo))}`),
         (character.honorableKills > 0 || character.pvpDeaths > 0) && el('span', { class: 'farmer-level' },
-          `${formatNumber(character.honorableKills)} HK · ${formatNumber(Math.floor(character.honor))} honor · ${formatNumber(character.pvpDeaths)} PvP death${character.pvpDeaths === 1 ? '' : 's'}`),
+          `${character.rank > 0 ? `${character.rankTitle} · ` : ''}${formatNumber(character.honorableKills)} HK · ${formatNumber(Math.floor(character.honor))} honor · ${formatNumber(character.pvpDeaths)} PvP death${character.pvpDeaths === 1 ? '' : 's'}`),
         el('span', { class: 'farmer-zone' }, character.zone ?? 'Idle',
           zone && el('span', { class: 'visually-hidden' }, ` (${difficulty} difficulty)`)),
       ),
@@ -110,6 +110,7 @@ function updateProgress(card, character) {
 }
 
 function renderZoneTables(account, character, onSend, onRecall) {
+  const best = zoneOptions(character)[0]
   return el('div', { class: 'zone-tables' },
     el('p', { class: 'zone-intro' },
       'Send ', el('strong', { style: { color: character.classColor } }, character.characterName),
@@ -118,10 +119,10 @@ function renderZoneTables(account, character, onSend, onRecall) {
         el('span', { class: 'quest-mark', 'aria-hidden': 'true' }, '!'),
         el('span', { class: 'hint-text', id: 'farm-rules', role: 'tooltip' },
           'Characters fight the mobs in their zone, simulated with their gear and the best rotation of the spells they have trained, ',
-          'and they eat and drink back up after (free vendor food and water for their level; health, mana, armor and spirit regen set how long). Quests come first: they hunt whatever their quests need, ',
+          'and they eat and drink back up after (free vendor food and water for their level; health, mana, armor and spirit regen set how long). Quests come first: they take the ones worth more than grinding, hunt whatever those need, ',
           'then grind anything they can beat. Rates here are for grinding; quest XP, gold and gear come on top. ',
           'XP falls off as mobs drop below your level and stops once they turn gray; gold keeps coming. ',
-          `Farming characters below level ${MAX_LEVEL} follow their race's leveling path (the zone marked Path): they move on at set levels or when a zone runs out of quests. Sending one elsewhere lasts until then.`),
+          `New characters start in their race's starting zone and stay in a starting zone (theirs, or another they're sent to) until level ${LEAVE_START_LEVEL}. Farming characters then go where their time is worth most (the zone marked Best): below level ${MAX_LEVEL} that's mostly XP, with gear they'd wear counted in; at ${MAX_LEVEL} it's gear. They look again when they level up, run out of quests worth doing, or can't beat anything; at ${MAX_LEVEL} also after each upgrade. Sending one elsewhere lasts until then.`),
       )),
     el('div', { class: 'continents' }, CONTINENTS.map((continent) => el('section', { class: 'continent', 'aria-labelledby': `continent-${continent.replace(/\W/g, '')}` },
       el('h3', { id: `continent-${continent.replace(/\W/g, '')}` }, continent),
@@ -137,14 +138,14 @@ function renderZoneTables(account, character, onSend, onRecall) {
             el('th', { scope: 'col' }, el('span', { class: 'visually-hidden' }, 'Action')),
           )),
           el('tbody', {}, ZONES.filter((z) => z.continent === continent)
-            .map((zone) => renderZoneRow(account, character, zone, onSend, onRecall))),
+            .map((zone) => renderZoneRow(account, character, zone, best, onSend, onRecall))),
         ),
       ),
     ))),
   )
 }
 
-function renderZoneRow(account, character, zone, onSend, onRecall) {
+function renderZoneRow(account, character, zone, best, onSend, onRecall) {
   const lockReason = zoneLockReason(character, zone)
   const isHere = character.zone === zone.name
   const rates = farmRates(character, zone)
@@ -172,8 +173,8 @@ function renderZoneRow(account, character, zone, onSend, onRecall) {
   }
 
   return el('tr', { class: [isHere && 'current', lockReason && 'locked'].filter(Boolean).join(' ') || null },
-    el('th', { scope: 'row' }, zone.name, routeZone(character) === zone.name
-      ? el('span', { class: 'path-mark', title: `${character.characterRace} leveling path zone for level ${character.characterLevel}` }, 'Path')
+    el('th', { scope: 'row' }, zone.name, best?.zone === zone.name
+      ? el('span', { class: 'path-mark', title: `Where ${character.characterName}'s time is worth most right now, counting the trip` }, 'Best')
       : null),
     el('td', {}, badge(zone.faction)),
     el('td', { class: 'num' }, zone.minLevel === zone.maxLevel ? String(zone.minLevel) : `${zone.minLevel}–${zone.maxLevel}`),

@@ -6,8 +6,10 @@ import { farmRates, questXp } from './combat.js'
 import { activeQuests, creditKill, nextAction, objectivesOf } from './quests.js'
 import { isClassSpell, startingSpells, trainSpells } from './spells.js'
 import { autoSpend, learnTalent, sanitizeTalents, talentPoints, unlearnTalent } from './talents.js'
-import { routeTravel } from './leveling.js'
+import { nextZone } from './leveling.js'
 import { canHold, getDungeon, dungeonLockReason, nextErrand, runErrand } from './dungeons.js'
+import { MAX_RANK, maxRpAtLevel, rankOf, rankTitle } from './honor.js'
+import { RESET_DAYS } from './reset.js'
 
 const lookup = (table, key) => (Object.hasOwn(table, key) ? table[key] : undefined)
 const BAG_SIZE = 16
@@ -17,7 +19,7 @@ const MIN_TIME_BANK = -12 * 3600 // owed after a long dungeon run
 export default class Character {
   #planned = null // the next action in the current zone, kept until there's time to do it
 
-  constructor({ id = crypto.randomUUID(), characterName, characterClass, characterSpec, characterRace, characterRole, characterLevel = MIN_LEVEL, characterXp = 0, zone = null, copper = 0, spells, talents, equipment = {}, bag = [], questsDone = [], questLog = {}, timeBank = 0, lootLog = [], honorableKills = 0, honor = 0, honorToday = null, pvpKills = 0, pvpDeaths = 0, pvpLog = [], pvpReadyAt = 0, hearthReadyAt = 0, dungeonQuests = [], dungeonQueue = null, dungeonClears = {}, queueDeclined = null }) {
+  constructor({ id = crypto.randomUUID(), characterName, characterClass, characterSpec, characterRace, characterRole, characterLevel = MIN_LEVEL, characterXp = 0, zone = null, copper = 0, spells, talents, equipment = {}, bag = [], questsDone = [], questLog = {}, timeBank = 0, lootLog = [], honorableKills = 0, honor = 0, honorToday = null, honorPeriod = null, rankPoints = 0, highestRank = 0, honorLastPeriod = null, pvpKills = 0, pvpDeaths = 0, pvpLog = [], pvpReadyAt = 0, hearthReadyAt = 0, dungeonQuests = [], dungeonQueue = null, dungeonClears = {}, queueDeclined = null }) {
     this.id = id
     this.characterName = Character.formatName(characterName)
     this.characterClass = characterClass
@@ -39,7 +41,11 @@ export default class Character {
     this.lootLog = lootLog // newest first: { item, source, at, equipped, quest? }
     this.honorableKills = honorableKills // players killed for honor
     this.honor = honor // honor points, unrounded
-    this.honorToday = honorToday // { day (UTC days since 1970), victims: { characterId: kills for honor } }
+    this.honorToday = honorToday // { day (Eastern day, reset.js), kills: honorable, points: honor, victims: { characterId: kills for honor } }
+    this.honorPeriod = honorPeriod // { period (reset.js), kills: honorable, points: honor } toward the next honor reset
+    this.rankPoints = rankPoints // PvP rank points, unrounded; see honor.js
+    this.highestRank = highestRank
+    this.honorLastPeriod = honorLastPeriod // { kills, points, standing } for the period before the last honor reset, or null
     this.pvpKills = pvpKills // all players killed
     this.pvpDeaths = pvpDeaths
     this.pvpLog = pvpLog // newest first: see worldPvp in pvp.js
@@ -55,7 +61,7 @@ export default class Character {
     return xpToNextLevel(this.characterLevel)
   }
 
-  // { solo, party }: see power.js. The UI calls solo power "power level".
+  // { solo, party, base }: see power.js. The UI calls solo power "power level".
   get power() {
     return characterPower(this)
   }
@@ -100,8 +106,9 @@ export default class Character {
   // Farms for `hours`: one fight or quest turn-in after another, each taking its own time. Leftover time
   // carries over to the next call. Kills and quests pay XP, money and gear at the character's level when
   // they happen; the money buys new spell ranks as soon as they're affordable, and talent points from new
-  // levels go into the spec's default build. The character follows its race's leveling path (leveling.js)
-  // when it reaches a step's level or runs out of quests. Dungeon quest pickups for its level come first.
+  // levels go into the spec's default build. The character moves to a better zone (see nextZone in
+  // leveling.js) when it levels up, runs out of quests worth doing, can't beat anything, or (at max level)
+  // wears an upgrade; the trip takes time. Pickups for dungeons it wants to run come first.
   // Returns the copper earned, levels gained, newly equipped item ids, zone moves ({ from, to, reason, level })
   // and pickup trips ({ zone, quests: dungeon quest ids picked up, steps: chain quests done }).
   farm(hours, now = Date.now()) {
@@ -117,10 +124,20 @@ export default class Character {
     const travels = []
     const errands = []
     this.timeBank += hours * 3600
+    const travel = (move) => {
+      travels.push({ from: this.zone, to: move.zone, reason: move.reason, level: this.characterLevel })
+      this.zone = move.zone
+      this.timeBank -= move.seconds
+    }
     for (;;) {
       const action = this.plannedAction
       if (!action) {
-        this.timeBank = 0 // nothing here the character can beat
+        const move = nextZone(this, 'stuck') // nothing here the character can beat
+        if (move) {
+          travel(move)
+          continue
+        }
+        this.timeBank = 0
         break
       }
       const seconds = action.fight ? action.fight.seconds : action.seconds
@@ -157,16 +174,16 @@ export default class Character {
       const gained = this.#gainXp(xp)
       levels += gained
       if (gained) autoSpend(this, talentPoints(this.characterLevel) - talentPoints(this.characterLevel - gained))
+      const worn = Object.values(this.equipment).join()
       if (found.length || gained) this.equipBest(found.map((a) => a.item))
+      const upgraded = worn !== Object.values(this.equipment).join()
       acquired.push(...found)
       this.copper += earned
       trainSpells(this)
-      const turnedIn = !action.fight && !action.errand
-      const move = (gained || turnedIn) && routeTravel(this, this.characterLevel - gained, turnedIn)
-      if (move) {
-        travels.push({ from: this.zone, to: move.zone, reason: move.reason, level: this.characterLevel })
-        this.zone = move.zone
-      }
+      const ranOut = !action.fight && !action.errand && !activeQuests(this, this.zone).length
+      const reason = gained ? 'level' : ranOut ? 'quests' : upgraded && this.characterLevel >= MAX_LEVEL ? 'gear' : undefined
+      const move = reason && nextZone(this, reason)
+      if (move) travel(move)
     }
     const upgrades = [...new Set(Object.values(this.equipment))].filter((id) => !wornBefore.has(id))
     this.#log(acquired, upgrades, now)
@@ -197,9 +214,12 @@ export default class Character {
     const upgrades = [...new Set(Object.values(this.equipment))].filter((id) => !wornBefore.has(id))
     this.#log(acquired, upgrades, now)
     this.#planned = null
-    const move = levels > 0 && routeTravel(this, fromLevel, false)
+    const move = levels > 0 && nextZone(this, 'level')
     const travel = move ? { from: this.zone, to: move.zone, reason: move.reason, level: this.characterLevel } : undefined
-    if (move) this.zone = move.zone
+    if (move) {
+      this.zone = move.zone
+      this.timeBank -= move.seconds
+    }
     return { xp: total, questCopper, levels, upgrades, travel }
   }
 
@@ -306,7 +326,23 @@ export default class Character {
     this.honor = fraction(data.honor, Number.MAX_SAFE_INTEGER)
     const today = data.honorToday
     this.honorToday = today && typeof today === 'object' && Number.isInteger(today.day) && today.victims && typeof today.victims === 'object'
-      ? { day: today.day, victims: Object.fromEntries(Object.entries(today.victims).filter(([id, n]) => id.length <= 64 && Number.isInteger(n) && n >= 1 && n <= 10).slice(0, 1000)) }
+      ? {
+          day: today.day,
+          kills: count(today.kills),
+          points: fraction(today.points, Number.MAX_SAFE_INTEGER),
+          victims: Object.fromEntries(Object.entries(today.victims).filter(([id, n]) => id.length <= 64 && Number.isInteger(n) && n >= 1 && n <= 10).slice(0, 1000)),
+        }
+      : null
+    // Saves before version 3 only counted the day: that day goes toward its period.
+    const period = data.honorPeriod ?? (this.honorToday && { period: Math.floor(this.honorToday.day / RESET_DAYS), kills: this.honorToday.kills, points: this.honorToday.points })
+    this.honorPeriod = period && typeof period === 'object' && Number.isInteger(period.period)
+      ? { period: period.period, kills: count(period.kills), points: fraction(period.points, Number.MAX_SAFE_INTEGER) }
+      : null
+    this.rankPoints = fraction(data.rankPoints, maxRpAtLevel(MAX_LEVEL))
+    this.highestRank = Math.max(Math.floor(fraction(data.highestRank, MAX_RANK)), this.rank)
+    const last = data.honorLastPeriod
+    this.honorLastPeriod = last && typeof last === 'object'
+      ? { kills: count(last.kills), points: fraction(last.points, Number.MAX_SAFE_INTEGER), standing: count(last.standing) }
       : null
     this.pvpKills = Math.max(count(data.pvpKills), this.honorableKills)
     this.pvpDeaths = count(data.pvpDeaths)
@@ -354,6 +390,16 @@ export default class Character {
 
   get faction() {
     return RACES[this.characterRace].faction
+  }
+
+  // PvP rank, 0 (none) to 14; see honor.js.
+  get rank() {
+    return rankOf(this.rankPoints)
+  }
+
+  // The faction's title for the rank, or null at rank 0.
+  get rankTitle() {
+    return rankTitle(this.faction, this.rank)
   }
 
   get classColor() {

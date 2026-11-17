@@ -1,13 +1,16 @@
 // Dungeons: five characters of one faction clear a dungeon together for XP, money, gear and dungeon quests.
-// Characters in a dungeon's level range pick up its quests on the way (errands, see nextErrand), then queue
-// for it on their own (autoQueue); players can also queue them by hand. Queued characters keep farming until
-// five of a faction are waiting for the same dungeon (formGroups). Dungeon quests don't count toward the
-// five-quest log.
+// A farming character queues on its own for the dungeons worth more to it than farming where it is
+// (autoDungeons), after picking up their quests (errands, see nextErrand); players can also queue it by hand.
+// Queued characters keep farming until five of a faction are waiting for the same dungeon and make a group
+// that can clear it (formGroups). Dungeon quests don't count toward the five-quest log.
 import { CLASSES, MAX_LEVEL, MIN_LEVEL, RACES, ROLES } from './data.js'
 import { CLASS_BITS, DUNGEONS, DUNGEON_QUESTS, RACE_BITS, bestLoadout, canUseNow, getItem, questRewardsFor, rollMobLoot } from './gear.js'
 import { getMob, killXp, mobLevelFor, questXp } from './combat.js'
 import { levelPower } from './power.js'
 import { QUEST_SECONDS } from './quests.js'
+import { zoneValue } from './leveling.js'
+import { rewardGain, runGear, worth } from './value.js'
+import { talentKey } from './talents.js'
 import { getZone } from './zones.js'
 
 export { DUNGEONS }
@@ -15,11 +18,17 @@ export const GROUP_SIZE = 5
 export const RUN_LOG_SIZE = 25
 export const TRAVEL_SECONDS = 900 // to another zone's quest giver and back
 const PICKUP_SECONDS = 60
+// A pickup trip's quests must be worth this many times the farming the trip costs.
+const ERRAND_MARGIN = 2
 const CLEAR_SHARE = 0.6 // of a dungeon's trash a run kills; the rest is skipped
 const GROUP_XP = 1.4 / GROUP_SIZE // Classic's five-player group bonus, split five ways
 const MIN_PACE = 0.6 // slower than this and the group wipes
 const MISSING_ROLE = 0.8 // pace without a tank, and again without a healer
 const LOG_QUALITY = 2 // loot of this quality and up goes in the run log
+// A character's guess at its group's pace: a typical group's party power over five of its own base power.
+const PACE_GUESS = 1.2
+// Of the upgrades that drop, the share a character expects to win.
+const NEED_SHARE = 0.5
 
 export const getDungeon = (name) => DUNGEONS.find((d) => d.name === name)
 
@@ -51,6 +60,9 @@ const bossLevels = new Map(DUNGEONS.map((d) => {
   return [d.name, levels[Math.floor(levels.length / 2)]]
 }))
 export const bossLevel = (dungeon) => bossLevels.get(dungeon.name)
+
+// What one clear kills: [mob entry, count].
+const killLists = new Map(DUNGEONS.map((d) => [d.name, [...d.bosses.map((entry) => [entry, 1]), ...d.trash.map(([entry, count]) => [entry, count * CLEAR_SHARE])]]))
 
 function canTake(character, id, done, groups) {
   const quest = DUNGEON_QUESTS[id]
@@ -85,19 +97,56 @@ export function pendingQuests(character) {
   return byZone
 }
 
+// Dungeon quests that need each chain step done first: Map(step id -> quest ids).
+const followers = new Map()
+for (const [id, quest] of Object.entries(DUNGEON_QUESTS)) {
+  if (quest.prev) followers.set(quest.prev, [...(followers.get(quest.prev) ?? []), Number(id)])
+}
+
+// What picking up the quest is worth to the character (see value.js): its XP and reward gear, and for a
+// chain step, the quests it leads to.
+function pickupValue(character, id, w) {
+  const quest = DUNGEON_QUESTS[id]
+  let value = questXp(character.characterLevel, quest) * w.xp + rewardGain(character, quest) * w.gear
+  if (quest.step) {
+    for (const next of followers.get(id) ?? []) if (fits(character, DUNGEON_QUESTS[next])) value += pickupValue(character, next, w)
+  }
+  return value
+}
+
+// The pickup trips worth making: Map(zone, or null for a city -> { quests, seconds, value }) for the quests
+// the character wants (wantedQuests), by where their giver is. A trip is worth making when its quests are
+// worth ERRAND_MARGIN times the farming the trip costs where the character is; skipped ones wait until more
+// quests there add up. Recomputed when zone, level, gear, talents or quests change.
+const tripCache = new WeakMap()
+export function errandTrips(character) {
+  const key = `${character.zone}|${character.characterLevel}|${character.questsDone.length}|${character.dungeonQuests.join()}|${Object.values(character.equipment).join()}|${talentKey(character)}`
+  const cached = tripCache.get(character)
+  if (cached?.key === key) return cached.trips
+  const trips = new Map()
+  const byZone = wantedQuests(character)
+  if (byZone.size) {
+    const w = worth(character)
+    const farming = zoneValue(character, character.zone) / 3600
+    for (const [zone, quests] of byZone) {
+      const seconds = (zone === character.zone ? 0 : TRAVEL_SECONDS) +
+        quests.reduce((sum, id) => sum + (DUNGEON_QUESTS[id].step ? QUEST_SECONDS : PICKUP_SECONDS), 0)
+      const value = quests.reduce((sum, id) => sum + pickupValue(character, id, w), 0)
+      if (value >= ERRAND_MARGIN * farming * seconds) trips.set(zone, { quests, seconds, value })
+    }
+  }
+  tripCache.set(character, { key, trips })
+  return trips
+}
+
 // The next quest pickup trip for a farming character, or undefined: { errand: { zone, quests }, seconds }.
-// Quests in its own zone come first, then cities, then the zone with the most to pick up.
+// Of the trips worth making (errandTrips), the one worth the most for its time.
 export function nextErrand(character) {
-  const byZone = pendingQuests(character)
-  if (!byZone.size) return undefined
-  const zones = [...byZone.keys()]
-  const zone = zones.includes(character.zone) ? character.zone
-    : zones.includes(null) ? null
-      : zones.reduce((best, z) => (byZone.get(z).length > byZone.get(best).length ? z : best))
-  const quests = byZone.get(zone)
-  const seconds = (zone === character.zone ? 0 : TRAVEL_SECONDS) +
-    quests.reduce((sum, id) => sum + (DUNGEON_QUESTS[id].step ? QUEST_SECONDS : PICKUP_SECONDS), 0)
-  return { errand: { zone, quests }, seconds }
+  let best
+  for (const [zone, trip] of errandTrips(character)) {
+    if (!best || trip.value / trip.seconds > best.trip.value / best.trip.seconds) best = { zone, trip }
+  }
+  return best && { errand: { zone: best.zone, quests: best.trip.quests }, seconds: best.trip.seconds }
 }
 
 // Picks up the errand's quests and does its chain steps. Returns the steps' { xp, copper, found } and
@@ -125,27 +174,83 @@ export function runErrand(character, errand) {
 // Dungeon quests the character holds for the dungeon.
 export const heldQuests = (character, name) => character.dungeonQuests.filter((id) => DUNGEON_QUESTS[id].dungeon === name)
 
-// Dungeons a character queues for on its own: those in its level range it holds quests for or hasn't
-// cleared, most quests held first.
-export function autoDungeons(character) {
-  return DUNGEONS
-    .filter((d) => inRange(character, d))
-    .map((d) => ({ name: d.name, held: heldQuests(character, d.name).length, level: d.level[0] }))
-    .filter((d) => d.held || !character.dungeonClears[d.name])
-    .sort((a, b) => b.held - a.held || b.level - a.level)
-    .map((d) => d.name)
+const runSeconds = (dungeon, pace) => dungeon.minutes * 60 * Math.min(3, Math.max(0.5, pace ** -1.5))
+
+// What one clear of the dungeon is worth to the character per hour (see value.js), or 0 if it guesses its
+// group would wipe: its share of the kills' XP and of the upgrades that drop, and the XP and reward gear of
+// the dungeon's quests it holds or can pick up.
+const valueCaches = new WeakMap()
+export function dungeonValue(character, dungeon) {
+  const pending = [...pendingQuests(character).values()].flat().filter((id) => !DUNGEON_QUESTS[id].step)
+  const quests = [...heldQuests(character, dungeon.name), ...pending.filter((id) => DUNGEON_QUESTS[id].dungeon === dungeon.name)]
+  const key = `${character.characterLevel}|${character.characterSpec}|${character.characterRole}|${Object.values(character.equipment).join()}|${talentKey(character)}|${quests.join()}`
+  let values = valueCaches.get(character)
+  if (!values) valueCaches.set(character, (values = new Map()))
+  const cached = values.get(dungeon.name)
+  if (cached?.key === key) return cached.value
+  let value = 0
+  const pace = (PACE_GUESS * character.power.base) / levelPower(bossLevel(dungeon))
+  if (pace >= MIN_PACE) {
+    const level = character.characterLevel
+    const kills = killLists.get(dungeon.name)
+    let xp = 0
+    for (const [entry, count] of kills) {
+      const mob = getMob(entry)
+      xp += killXp(level, mobLevelFor(mob, level), mob) * GROUP_XP * count
+    }
+    let gear = runGear(character, kills, NEED_SHARE)
+    for (const id of quests) {
+      xp += questXp(level, DUNGEON_QUESTS[id])
+      gear += rewardGain(character, DUNGEON_QUESTS[id])
+    }
+    const w = worth(character)
+    value = ((xp * w.xp + gear * w.gear) / runSeconds(dungeon, pace)) * 3600
+  }
+  values.set(dungeon.name, { key, value })
+  return value
 }
 
-// Keeps a farming character's own queue up to date: once it has picked up every dungeon quest it can, it
-// queues for every dungeon in autoDungeons. A character queued by hand stays as it is, and one taken out by
-// hand stays out until it levels or picks up more quests.
+// Dungeons a character queues for on its own, most worth first: [{ name, value }] for those in its level
+// range worth more than farming its zone. Recomputed when level, gear, talents, quests or zone change.
+const wantCache = new WeakMap()
+export function autoDungeons(character) {
+  if (!getZone(character.zone)) return []
+  const key = `${character.zone}|${character.characterLevel}|${character.characterSpec}|${character.characterRole}|${Object.values(character.equipment).join()}|${character.questsDone.length}|${character.dungeonQuests.join()}|${talentKey(character)}`
+  const cached = wantCache.get(character)
+  if (cached?.key === key) return cached.dungeons
+  const candidates = DUNGEONS.filter((d) => inRange(character, d))
+  const farming = candidates.length ? zoneValue(character, character.zone) : 0
+  const dungeons = candidates
+    .map((d) => ({ name: d.name, value: dungeonValue(character, d) }))
+    .filter((d) => d.value > farming)
+    .sort((a, b) => b.value - a.value)
+  wantCache.set(character, { key, dungeons })
+  return dungeons
+}
+
+// pendingQuests for the dungeons in autoDungeons.
+export function wantedQuests(character) {
+  const byZone = new Map()
+  const pending = pendingQuests(character)
+  if (!pending.size) return byZone
+  const wanted = new Set(autoDungeons(character).map((d) => d.name))
+  for (const [zone, ids] of pending) {
+    const kept = ids.filter((id) => wanted.has(DUNGEON_QUESTS[id].dungeon))
+    if (kept.length) byZone.set(zone, kept)
+  }
+  return byZone
+}
+
+// Keeps a farming character's own queue up to date: once it has made the pickup trips worth making
+// (errandTrips), it queues for every dungeon in autoDungeons. A character queued by hand stays as it
+// is, and one taken out by hand stays out until it levels or picks up more quests.
 export function autoQueue(character, now) {
   const queue = character.dungeonQueue
   if (queue?.manual || !getZone(character.zone)) return
-  if (!queue && pendingQuests(character).size) return
+  if (!queue && errandTrips(character).size) return
   const declined = character.queueDeclined
   if (declined && declined.level === character.characterLevel && declined.quests === character.dungeonQuests.length) return
-  const dungeons = autoDungeons(character)
+  const dungeons = autoDungeons(character).map((d) => d.name)
   character.dungeonQueue = dungeons.length ? { dungeons, since: queue?.since ?? now, manual: false } : null
 }
 
@@ -163,9 +268,10 @@ export function leaveQueue(character) {
 
 export const isQueuedFor = (character, name) => !!character.dungeonQueue?.dungeons.includes(name)
 
-// Starts runs while five characters of a faction are queued for the same dungeon: the dungeon the most are
-// queued for (the higher one on ties), with its five longest-waiting. Characters still owed time from their
-// last run (negative timeBank) wait. Returns the runs.
+// Starts runs while five characters of a faction queued for the same dungeon make a group that can clear it.
+// Dungeons the most are queued for go first (the higher one on ties). A group is the longest-waiting tank and
+// healer, if any are queued, and the longest-waiting others. Characters still owed time from their last run
+// (negative timeBank) wait. Returns the runs.
 export function formGroups(characters, now, random = Math.random) {
   const runs = []
   for (const faction of ['Alliance', 'Horde']) {
@@ -173,22 +279,28 @@ export function formGroups(characters, now, random = Math.random) {
       .filter((c) => c.dungeonQueue && c.faction === faction && c.timeBank >= 0)
       .sort((a, b) => a.dungeonQueue.since - b.dungeonQueue.since)
     for (;;) {
-      let best
-      let most = GROUP_SIZE - 1
-      for (const dungeon of DUNGEONS) {
-        const n = ready.filter((c) => isQueuedFor(c, dungeon.name)).length
-        if (n > most || (n === most && best)) {
-          best = dungeon
-          most = n
-        }
-      }
-      if (!best) break
-      const group = ready.filter((c) => isQueuedFor(c, best.name)).slice(0, GROUP_SIZE)
-      ready = ready.filter((c) => !group.includes(c))
-      runs.push(runDungeon(group, best, now, random))
+      const run = DUNGEONS
+        .map((dungeon) => ({ dungeon, queued: ready.filter((c) => isQueuedFor(c, dungeon.name)) }))
+        .filter((o) => o.queued.length >= GROUP_SIZE)
+        .sort((a, b) => b.queued.length - a.queued.length || b.dungeon.level[0] - a.dungeon.level[0])
+        .map((o) => ({ dungeon: o.dungeon, group: pickGroup(o.queued) }))
+        .find((o) => groupPace(o.group, o.dungeon) >= MIN_PACE)
+      if (!run) break
+      ready = ready.filter((c) => !run.group.includes(c))
+      runs.push(runDungeon(run.group, run.dungeon, now, random))
     }
   }
   return runs
+}
+
+// Five of `queued` (longest waiting first): its first tank and healer, then the rest in order.
+function pickGroup(queued) {
+  const picks = new Set(['Tank', 'Healer'].map((role) => queued.find((c) => c.characterRole === role)).filter(Boolean))
+  for (const c of queued) {
+    if (picks.size === GROUP_SIZE) break
+    picks.add(c)
+  }
+  return queued.filter((c) => picks.has(c))
 }
 
 // How fast the group clears: its party power against five characters of the bosses' level, slower without a
@@ -217,7 +329,7 @@ export function runDungeon(members, dungeon, now, random = Math.random) {
   const pace = groupPace(members, dungeon)
   const success = pace >= MIN_PACE
   const progress = success ? 1 : Math.max(0.1, pace / MIN_PACE) * 0.9
-  const seconds = Math.round(dungeon.minutes * 60 * (success ? Math.min(3, Math.max(0.5, pace ** -1.5)) : progress))
+  const seconds = Math.round(success ? runSeconds(dungeon, pace) : dungeon.minutes * 60 * progress)
   const bossKills = success ? dungeon.bosses.length : Math.floor(dungeon.bosses.length * progress)
   const kills = [
     ...dungeon.bosses.slice(0, bossKills).map((entry) => [entry, 1]),

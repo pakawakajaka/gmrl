@@ -6,7 +6,7 @@
 // a quarter of an hour after one it neither spots nor is spotted.
 // One-on-one fights are worked out like mob fights, with expected values, both players simulated
 // together; that gives both kill times and how much they can swing, and one roll at those odds picks the
-// winner. The fight is then played out blow by blow, each player's luck nudged just enough that it ends
+// winner. The fight is then played out hit by hit, each player's luck nudged just enough that it ends
 // the way the roll went. Once others join it's a brawl, everyone simulated together, each with a roll for
 // how well it plays. Paladins bubble and hearth out of a lost fight.
 // The data has no mounts, stealth or Divine Shield, so levels and classes stand in for them; Travel Form
@@ -16,6 +16,7 @@ import { CLASSES, MAX_LEVEL, MIN_LEVEL, RACES } from './data.js'
 import { HEARTH_SECONDS, MAX_FIGHT_SECONDS, brawl, duelSim, variantsFor } from './sim.js'
 import { effectValue, getSpell, knownAbilities } from './spells.js'
 import { getZone, grayLevel, zeroDifference } from './zones.js'
+import { dayOf, periodOf } from './reset.js'
 
 const HOUR_MS = 3600 * 1000
 export const MEETS_PER_HOUR = 0.5 // how often two enemies farming the same zone come across each other
@@ -42,12 +43,12 @@ const DRUNK = 1 // noise in the guess
 const ATTACK_AT = 0.4 // attacks when the guess is at least this
 const MAX_LEVELS_UP = 2 // never attacks an enemy more than this many levels above it
 
-// Classic 1.12 honor (vmangos Formulas.h GetHonorGain). Nobody here has a PvP rank, so every victim is
-// worth a rank 0 player's. Split evenly between the enemies credited with the kill.
+// Classic 1.12 honor (vmangos Formulas.h GetHonorGain): a higher-ranked victim is worth more (see
+// honor.js for ranks). Split evenly between the enemies credited with the kill.
 const HONOR_BASE = 188.3
+const HONOR_RANK_GROWTH = 0.05331 // per victim rank, exponential
 const HONOR_LEVEL_COEFF = [[60, 1], [50, 0.9545], [40, 0.5707], [30, 0.3434], [20, 0.207], [0, 0.1212]] // killer level, coefficient
 const SAME_VICTIM_KILLS = 10 // a day: each kill of the same player is worth 10% less, none after this many
-const DAY_MS = 24 * HOUR_MS
 
 // Getting away from a higher-level enemy, by hiding or running, whichever looks safer.
 const HIDE_SEEN = 0.4 // the chance an enemy who noticed spots a hiding player anyway
@@ -124,7 +125,7 @@ function deathSeconds(ctx) {
 // One pairing of rotations: { odds, draw, seconds, states } with `states` both sides' results when the
 // first one fell. The attacker strikes first; the victim reacts late, and later still if it has to run
 // in. Who heals or bursts first can flip on a fraction of a second, so the pairing is fought once per
-// reaction time and averaged. Each side's kill time also swings with how few and how lumpy its blows
+// reaction time and averaged. Each side's kill time also swings with how few and how lumpy its hits
 // are, plus what the sim leaves out.
 function fightOut(kits, variants) {
   const melee = variants.map(isMelee)
@@ -405,21 +406,32 @@ function honorLevelFactor(killerLevel, victimLevel) {
   return (zd + victimLevel - killerLevel) / zd
 }
 
-// Honor for one kill, before rounding. `sameVictimKills` is how many times the killer already got honor
-// for this victim today; `groupSize` how many enemies share the kill.
-export function honorGain(killerLevel, victimLevel, sameVictimKills = 0, groupSize = 1) {
+// Honor for one kill, before rounding. `victimRank` is the victim's PvP rank (0 to 14); `sameVictimKills`
+// how many times the killer already got honor for this victim today; `groupSize` how many enemies share
+// the kill.
+export function honorGain(killerLevel, victimLevel, victimRank = 0, sameVictimKills = 0, groupSize = 1) {
   if (sameVictimKills >= SAME_VICTIM_KILLS) return 0
   const coeff = HONOR_LEVEL_COEFF.find(([level]) => killerLevel >= level)[1]
-  return (coeff * (1 - sameVictimKills / SAME_VICTIM_KILLS) * HONOR_BASE * honorLevelFactor(killerLevel, victimLevel)) / groupSize
+  const base = HONOR_BASE * Math.exp(HONOR_RANK_GROWTH * victimRank)
+  return (coeff * (1 - sameVictimKills / SAME_VICTIM_KILLS) * base * honorLevelFactor(killerLevel, victimLevel)) / groupSize
 }
 
-// Books the honor for one kill. Like the game, a kill worth no honor isn't an honorable kill.
+// Books the honor for one kill: toward the killer's day (and its same-victim count) and toward its period
+// for the honor reset (honor.js). Like the game, a kill worth no honor isn't an honorable kill.
 function earnHonor(killer, victim, groupSize, at) {
-  const day = Math.floor(at / DAY_MS)
-  if (killer.honorToday?.day !== day) killer.honorToday = { day, victims: {} }
-  const { victims } = killer.honorToday
-  const honor = honorGain(killer.characterLevel, victim.characterLevel, victims[victim.id] ?? 0, groupSize)
-  if (honor > 0) victims[victim.id] = (victims[victim.id] ?? 0) + 1
+  const day = dayOf(at)
+  const period = periodOf(at)
+  if (killer.honorToday?.day !== day) killer.honorToday = { day, kills: 0, points: 0, victims: {} }
+  if (killer.honorPeriod?.period !== period) killer.honorPeriod = { period, kills: 0, points: 0 }
+  const today = killer.honorToday
+  const honor = honorGain(killer.characterLevel, victim.characterLevel, victim.rank, today.victims[victim.id] ?? 0, groupSize)
+  if (honor > 0) {
+    today.victims[victim.id] = (today.victims[victim.id] ?? 0) + 1
+    for (const tally of [today, killer.honorPeriod]) {
+      tally.kills += 1
+      tally.points += honor
+    }
+  }
   return honor
 }
 

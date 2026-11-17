@@ -2,8 +2,11 @@ import Character from './character.js'
 import Guild from './guild.js'
 import { MIN_LEVEL, defaultSpec } from './data.js'
 import { getZone, zoneLockReason } from './zones.js'
+import { startZone } from './leveling.js'
 import { encounterRecord, restoreEncounter, worldPvp } from './pvp.js'
 import { RUN_LOG_SIZE, autoQueue, formGroups, joinQueue, leaveQueue, restoreRun } from './dungeons.js'
+import { honorResets } from './honor.js'
+import { periodOf, periodStart } from './reset.js'
 
 const ID_PATTERN = /^[\w-]+$/
 const MS_PER_HOUR = 3600 * 1000
@@ -14,7 +17,11 @@ export const ENCOUNTER_DETAIL_SIZE = 10 // the newest encounters that keep their
 // Bump when the save format changes, and upgrade older saves in fromJSON.
 // 1: guilds hold characters. Saves without a saveVersion are from before versioning: either that format or
 //    the older one (account-wide characters, guilds listing characterIds).
-export const SAVE_VERSION = 1
+// 2: characters have PvP ranks (rankPoints, highestRank, honorLastDay; honorToday counts kills and points).
+//    Older saves start at rank 0.
+// 3: the honor reset is every 3 days: honorPeriod counts kills and points toward it, honorLastPeriod
+//    replaces honorLastDay. Older saves count honorToday toward its period and drop honorLastDay.
+export const SAVE_VERSION = 3
 // Accounts that get dev tools (e.g. Save to file). Not a security boundary: the save endpoint is dev-server only.
 const DEV_ACCOUNT_IDS = new Set(['379d1f11-f7ac-4e09-ab3c-b51930ba2aa8'])
 
@@ -48,21 +55,27 @@ export default class Account {
   }
 
   // Pays out farming from `lastTick` to `now`, with world PvP in contested zones and dungeon runs along the
-  // way. Returns who leveled up, new gear still worn, the PvP fights (each with the `id` of its encounter
-  // record), moves along leveling paths ({ character, from, to, reason, level }), dungeon quest pickup trips
-  // ({ character, zone, quests, steps }) and dungeon runs (records, see runDungeon). Pays out at most the last
-  // MAX_AWAY_HOURS: `awayHours` is the whole time since the last tick, `hours` the part paid out.
+  // way, and the honor reset (honor.js) at the end of each period (reset.js) in between. Returns who leveled up, new
+  // gear still worn, the PvP fights (each with the `id` of its encounter record), zone moves
+  // ({ character, from, to, reason, level }), dungeon quest pickup trips ({ character, zone, quests, steps }),
+  // dungeon runs (records, see runDungeon) and PvP rank changes ({ character, from, to }). Pays out at most
+  // the last MAX_AWAY_HOURS: `awayHours` is the whole time since the last tick, `hours` the part paid out.
+  // Resets in the unpaid part still happen, with no honor earned.
   tick(now = Date.now(), random = Math.random) {
     const awayHours = Math.max(0, now - this.lastTick) / MS_PER_HOUR
     const hours = Math.min(awayHours, MAX_AWAY_HOURS)
     const start = now - hours * MS_PER_HOUR
+    const resetFrom = this.lastTick // resets are done up to here
     this.lastTick = Math.max(this.lastTick, now)
-    const result = { awayHours, hours, levelUps: [], upgrades: [], fights: [], travels: [], errands: [], runs: [] }
+    const result = { awayHours, hours, levelUps: [], upgrades: [], fights: [], travels: [], errands: [], runs: [], ranks: [] }
     const leveled = new Set()
     const upgraded = new Map(this.characters.map((c) => [c, new Set()]))
-    for (let done = 0; done < hours; done += SLICE_HOURS) {
-      const slice = Math.min(SLICE_HOURS, hours - done)
-      const sliceEnd = start + (done + slice) * MS_PER_HOUR
+    const ranks = new Map(this.characters.map((c) => [c, c.rank]))
+    honorResets(this.characters, resetFrom, start)
+    // Slices end at each reset, so a period's honor is all in before it.
+    for (let from = start; from < now;) {
+      const sliceEnd = Math.min(from + SLICE_HOURS * MS_PER_HOUR, now, periodStart(periodOf(from) + 1))
+      const slice = (sliceEnd - from) / MS_PER_HOUR
       const fights = worldPvp(this.characters, slice, sliceEnd, random)
       for (const fight of fights) {
         fight.id = crypto.randomUUID()
@@ -87,8 +100,11 @@ export default class Account {
           if (travel) result.travels.push({ character, ...travel })
         })
       }
+      honorResets(this.characters, from, sliceEnd)
+      from = sliceEnd
     }
     result.levelUps = [...leveled]
+    for (const [character, from] of ranks) if (character.rank !== from) result.ranks.push({ character, from, to: character.rank })
     if (this.encounters.length > ENCOUNTER_LOG_SIZE) this.encounters.length = ENCOUNTER_LOG_SIZE
     if (this.dungeonRuns.length > RUN_LOG_SIZE) this.dungeonRuns.length = RUN_LOG_SIZE
     trimLogs(this.encounters)
@@ -169,9 +185,9 @@ export default class Account {
     return true
   }
 
-  // Adds a new character to the guild. New characters always start at level 1 with no XP or gear.
-  // Characters can't be edited after creation. Returns false if there's no such guild or it's of the
-  // other faction.
+  // Adds a new character to the guild. New characters always start at level 1 with no XP or gear, farming
+  // in their race's starting zone. Characters can't be edited after creation. Returns false if there's no
+  // such guild or it's of the other faction.
   addCharacter(character, guildId, now = Date.now()) {
     const guild = this.getGuild(guildId)
     if (!guild || guild.faction !== character.faction) return false
@@ -179,7 +195,7 @@ export default class Account {
     character.characterLevel = MIN_LEVEL
     character.characterXp = 0
     character.talents = {}
-    character.zone = null
+    character.zone = startZone(character)
     return guild.add(character)
   }
 
@@ -197,7 +213,7 @@ export default class Account {
       const c = { ...saved, characterSpec: saved.characterSpec ?? defaultSpec(saved.characterClass, saved.characterRole) }
       if (Object.keys(Character.validate(c)).length > 0) return null
       seen.add(c.id)
-      const character = new Character({ ...c, characterXp: 0, zone: null, copper: 0, spells: undefined, talents: {}, equipment: {}, bag: [], questsDone: [], questLog: {}, timeBank: 0, lootLog: [], honorableKills: 0, honor: 0, honorToday: null, pvpKills: 0, pvpDeaths: 0, pvpLog: [], pvpReadyAt: 0, hearthReadyAt: 0, dungeonQuests: [], dungeonQueue: null, dungeonClears: {}, queueDeclined: null })
+      const character = new Character({ ...c, characterXp: 0, zone: null, copper: 0, spells: undefined, talents: {}, equipment: {}, bag: [], questsDone: [], questLog: {}, timeBank: 0, lootLog: [], honorableKills: 0, honor: 0, honorToday: null, honorPeriod: null, rankPoints: 0, highestRank: 0, honorLastPeriod: null, pvpKills: 0, pvpDeaths: 0, pvpLog: [], pvpReadyAt: 0, hearthReadyAt: 0, dungeonQuests: [], dungeonQueue: null, dungeonClears: {}, queueDeclined: null })
       const xp = Number(c.characterXp)
       if (Number.isFinite(xp) && xp > 0 && xp < character.xpToNextLevel) character.characterXp = xp
       if (!zoneLockReason(character, getZone(c.zone))) character.zone = c.zone

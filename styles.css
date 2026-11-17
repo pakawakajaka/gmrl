@@ -188,6 +188,11 @@ main:has(.farm) {
   font-size: 1.6rem;
 }
 
+.view-subtitle {
+  margin: 0;
+  color: var(--text-muted);
+}
+
 .view-footer {
   display: flex;
   flex-wrap: wrap;
@@ -1221,6 +1226,16 @@ main:has(.character-sheet) {
   display: block;
 }
 
+/* An info mark that sits at the end of a line of text instead of a panel's corner. */
+.info-mark.inline {
+  position: relative;
+  top: auto;
+  right: auto;
+  margin-left: 0.35rem;
+  font-size: 1.1rem;
+  vertical-align: -0.1rem;
+}
+
 .note {
   grid-column: 1 / -1;
   font-size: 0.8rem;
@@ -1514,7 +1529,7 @@ main:has(.character-sheet) {
   text-decoration: line-through;
 }
 
-/* Leveling path: the step for the character's level in gold, the zone it's in now bold. */
+/* Zones weighed: the best in gold, the zone it's in now bold. */
 .route {
   display: flex;
   flex-wrap: wrap;
@@ -1614,8 +1629,54 @@ main:has(.character-sheet) {
 }
 
 .sheet-pvp {
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto auto minmax(0, 1fr);
   align-content: start;
+}
+
+.pvp-rank {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.rank-icon {
+  flex: none;
+  border-radius: 6px;
+}
+
+.pvp-rank-text {
+  display: grid;
+  flex: 1;
+  gap: 0.3rem;
+}
+
+.rank-fill {
+  background: linear-gradient(90deg, #b8860b, var(--accent));
+}
+
+.pvp-days {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  text-align: right;
+}
+
+.pvp-days th,
+.pvp-days td {
+  padding: 0.2rem 0.4rem;
+}
+
+.pvp-days thead th {
+  font-size: 0.7rem;
+  font-weight: 400;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.pvp-days tbody th {
+  font-weight: 400;
+  text-align: left;
+  color: var(--text-muted);
 }
 
 .pvp-tally {
@@ -1695,6 +1756,90 @@ main:has(.character-sheet) {
 
 .world-pvp > .note {
   margin-bottom: 0.75rem;
+}
+
+.pvp-standings {
+  margin-bottom: 1.25rem;
+}
+
+.pvp-standings h3 {
+  margin: 0 0 0.25rem;
+}
+
+.pvp-standings .note {
+  margin: 0 0 0.75rem;
+}
+
+.standings-factions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+  gap: 1rem;
+  align-items: start;
+}
+
+.standings-alliance { --faction-color: var(--alliance); }
+.standings-horde { --faction-color: var(--horde); }
+
+.standings {
+  width: 100%;
+  border-collapse: collapse;
+  border-top: 3px solid var(--faction-color);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  font-size: 0.85rem;
+  text-align: right;
+}
+
+.standings caption {
+  padding-bottom: 0.3rem;
+  font-weight: 700;
+  text-align: left;
+  color: var(--faction-color);
+}
+
+.standings th,
+.standings td {
+  padding: 0.3rem 0.5rem;
+}
+
+.standings thead th {
+  font-size: 0.7rem;
+  font-weight: 400;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.standings th:first-child,
+.standings td:first-child {
+  width: 2.5rem;
+  text-align: left;
+}
+
+.standings th:nth-child(2) {
+  text-align: left;
+}
+
+.standings tbody th {
+  font-weight: 400;
+}
+
+.standings tbody th a {
+  color: var(--class-color);
+  font-weight: 700;
+}
+
+.standings-title {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.standings tbody tr + tr {
+  border-top: 1px solid var(--border);
+}
+
+.standings-out {
+  opacity: 0.55;
 }
 
 .encounter-list {

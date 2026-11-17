@@ -1,8 +1,9 @@
 // Questing: which quests a character has on the go in a zone, what it should kill next for them, and
 // crediting kills and quest-item drops.
 import { CLASS_BITS, QUESTS, RACE_BITS, ZONE_QUESTS, getQuest, questRewardsFor } from './gear.js'
-import { fightAgainst, pickGrindTarget } from './combat.js'
+import { fightAgainst, pickGrindTarget, questXp } from './combat.js'
 import { talentKey } from './talents.js'
+import { grindValue, killValue, rewardGain, worth } from './value.js'
 import { grayLevel } from './zones.js'
 
 // Quests worked on at once. Kills count for every quest in the log that needs them.
@@ -37,7 +38,7 @@ export const isComplete = (character, questId) => {
 }
 
 // The fastest beatable mob to kill for objective `o`, or undefined if none can be beaten.
-function bestSource(character, o) {
+export function bestSource(character, o) {
   let best
   let bestCost = Infinity
   for (const entry of o.sources) {
@@ -65,21 +66,46 @@ function isAvailable(character, id, done, doneGroups) {
   return objectivesOf(id).every((o) => bestSource(character, o))
 }
 
-// Quest ids the character is working on in the zone, in the zone's quest order. Recomputed when level,
-// gear, talents or completed quests change.
+// What finishing the quest from here is worth (see value.js): { value, seconds, rate (value per hour) } for
+// the kills its objectives still need, each paying its own XP and loot, and turning it in for XP and reward
+// gear. Undefined if an objective has nothing beatable to kill.
+export function questPlan(character, questId, w = worth(character)) {
+  const quest = getQuest(questId)
+  const counts = questProgress(character, questId)
+  let seconds = turnInSeconds(questId)
+  let value = questXp(character.characterLevel, quest) * w.xp + rewardGain(character, quest) * w.gear
+  for (const [i, o] of objectivesOf(questId).entries()) {
+    if (counts[i] >= o.count) continue
+    const fight = bestSource(character, o)
+    if (!fight) return undefined
+    const kills = (o.count - counts[i]) / (o.chances ? o.chances.get(fight.entry) / 100 : 1)
+    seconds += kills * fight.seconds
+    value += kills * killValue(character, fight, w)
+  }
+  return { value, seconds, rate: (value / seconds) * 3600 }
+}
+
+// Quest ids the character works on in the zone, most worth per hour first: up to QUEST_LOG_SIZE of the
+// quests it can do there that are worth more than grinding the zone. Recomputed when level, gear, talents or
+// completed quests change.
 const activeCache = new WeakMap()
 export function activeQuests(character, zoneName) {
-  const key = `${zoneName}|${character.characterLevel}|${Object.values(character.equipment).join()}|${character.questsDone.length}|${talentKey(character)}`
-  const cached = activeCache.get(character)
-  if (cached?.key === key) return cached.ids
+  const key = `${character.characterLevel}|${character.characterSpec}|${character.characterRole}|${Object.values(character.equipment).join()}|${character.questsDone.length}|${talentKey(character)}`
+  let cached = activeCache.get(character)
+  if (cached?.key !== key) activeCache.set(character, (cached = { key, zones: new Map() }))
+  if (cached.zones.has(zoneName)) return cached.zones.get(zoneName)
   const done = new Set(character.questsDone)
   const doneGroups = new Set(character.questsDone.map((id) => getQuest(id)?.exclusive).filter(Boolean))
-  const ids = []
+  const w = worth(character)
+  const grind = grindValue(character, zoneName)
+  const plans = []
   for (const id of Object.hasOwn(ZONE_QUESTS, zoneName) ? ZONE_QUESTS[zoneName] : []) {
-    if (isAvailable(character, id, done, doneGroups)) ids.push(id)
-    if (ids.length === QUEST_LOG_SIZE) break
+    if (!isAvailable(character, id, done, doneGroups)) continue
+    const plan = questPlan(character, id, w)
+    if (plan.rate > grind) plans.push({ id, rate: plan.rate })
   }
-  activeCache.set(character, { key, ids })
+  const ids = plans.sort((a, b) => b.rate - a.rate).slice(0, QUEST_LOG_SIZE).map((p) => p.id)
+  cached.zones.set(zoneName, ids)
   return ids
 }
 

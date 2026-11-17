@@ -39,9 +39,14 @@ const SPECS = [
   ['Warrior', 'Arms', 'Orc', 'DPS'], ['Shaman', 'Enhancement', 'Orc', 'DPS'], ['Druid', 'Restoration', 'Tauren', 'Healer'],
   ['Warlock', 'Affliction', 'Undead', 'DPS'], ['Hunter', 'Beast Mastery', 'Troll', 'DPS'],
 ]
-const make = ([cls, spec, race, role], i) => new Character({ id: `c${i}`, characterName: `${cls}${'ABCDEFGHIJ'[i]}`, characterClass: cls, characterSpec: spec, characterRace: race, characterRole: role, characterLevel: 25, zone: 'Hillsbrad Foothills' })
-const a = accountOf('Test', SPECS.map(make), clock - 10 * HOUR)
-const { fights } = a.tick(clock, seeded(1))
+// Level 24 in Ashenvale for 5 hours. Each hour everyone who moved on is sent back, so they keep meeting.
+const make = ([cls, spec, race, role], i) => new Character({ id: `c${i}`, characterName: `${cls}${'ABCDEFGHIJ'[i]}`, characterClass: cls, characterSpec: spec, characterRace: race, characterRole: role, characterLevel: 24, zone: 'Ashenvale' })
+const a = accountOf('Test', SPECS.map(make), clock - 5 * HOUR)
+const fights = []
+for (let h = 4; h >= 0; h--) {
+  fights.push(...a.tick(clock - h * HOUR, seeded(5 - h)).fights)
+  for (const c of a.characters) c.zone = 'Ashenvale'
+}
 // Brawls come early, while everyone's still in the zone: add a fresh one on top so it keeps its log.
 const fresh = accountOf('Fresh', SPECS.map(make), clock - HOUR)
 const freshFights = fresh.tick(clock, seeded(2)).fights
@@ -57,7 +62,7 @@ const brawl = a.encounters.find((e) => e.kind === 'brawl' && e.log)
 const oldFight = a.encounters.find((e) => e.kind !== 'evade' && !e.log)
 const duel = a.encounters.find((e) => e.kind === 'duel' && e.log)
 const evade = a.encounters.find((e) => e.kind === 'evade')
-check('has a brawl, a duel and a getaway', brawl && duel && evade && oldFight)
+check('has a brawl, a duel and a getaway', brawl && duel && evade && oldFight, JSON.stringify({ brawl: !!brawl, duel: !!duel, evade: !!evade, oldFight: !!oldFight, n: a.encounters.length }))
 const f = fights.find((x) => x.id === brawl.id)
 check('brawl record matches its fight', brawl.members.length === f.sides.flat().length && brawl.members.filter((m) => m.out === 'died').length === f.dead.length && brawl.members.reduce((n, m) => n + m.honor, 0) === f.honor)
 check('records are plain data', JSON.stringify(a.encounters).length > 0 && a.encounters.every((e) => e.members.every((m) => typeof m.name === 'string' && !('c' in m))))
@@ -79,7 +84,7 @@ check('breakdown matches the log', fightsOnly.filter((e) => e.log && e.log.lengt
 })))
 const lastHp = (e, i) => e.log.filter((r) => r[3] === i && r[1] <= 1).at(-1)?.[7]
 check('the dead are at 0 health in the log, the rest above', fightsOnly.filter((e) => e.log).every((e) => e.members.every((m, i) => (m.out === 'died') === (lastHp(e, i) === 0))))
-// Survivors can regain health after their last logged blow (regen, Drain Life), never lose it.
+// Survivors can regain health after their last logged hit (regen, Drain Life), never lose it.
 check('end health recorded: 0 for the dead, at least the log\'s last', fightsOnly.every((e) => e.members.every((m, i) => m.maxHp > 0 && m.hp >= 0 && m.hp <= m.maxHp && (m.out === 'died') === (m.hp === 0) && (!e.log || e.log.length >= 2000 || lastHp(e, i) === undefined || m.hp >= lastHp(e, i) - 1))))
 check('getaways have no health', a.encounters.filter((e) => e.kind === 'evade').every((e) => e.members.every((m) => m.hp === null && m.maxHp === null)))
 check('log times within the fight, in order', fightsOnly.filter((e) => e.log).every((e) => e.log.every((r, j) => r[0] <= Math.round(e.seconds * 10) + 1 && (j === 0 || e.log[j - 1][0] <= r[0]))))

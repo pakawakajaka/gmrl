@@ -1,4 +1,4 @@
-// Levels a character per race 1-60 by following its leveling path (farm() auto-travels).
+// Levels a character per race 1-60 from its starting zone (farm() picks zones on its own).
 import { JSDOM } from 'jsdom'
 import { fileURLToPath } from 'node:url'
 const root = process.env.ROOT ?? fileURLToPath(new URL('../', import.meta.url))
@@ -6,7 +6,7 @@ const dom = new JSDOM('<!doctype html><body></body>', { url: 'http://localhost/'
 globalThis.document = dom.window.document
 globalThis.window = dom.window
 const { default: Character } = await import(root + 'character.js')
-const { routeOf } = await import(root + 'leveling.js')
+const { startZone } = await import(root + 'leveling.js')
 const specs = [
   ['Warrior', 'Arms', 'Human', 'DPS'],
   ['Paladin', 'Retribution', 'Dwarf', 'DPS'],
@@ -20,7 +20,7 @@ const specs = [
 const only = process.argv[2]
 for (const [cls, spec, race, role] of specs.filter(([, , r]) => !only || r === only)) {
   const c = new Character({ characterName: 'Sim', characterClass: cls, characterSpec: spec, characterRace: race, characterRole: role })
-  c.zone = routeOf(c)[0][1]
+  c.zone = startZone(c)
   let hours = 0
   const log = []
   let stuck = 0

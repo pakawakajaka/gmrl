@@ -6,9 +6,11 @@ import { objectivesOf, questProgress } from './quests.js'
 import { mountOf } from './pvp.js'
 import { getSpell, knownAbilities } from './spells.js'
 import { renderTalentTile } from './talents-view.js'
-import { routeOf, routeZone } from './leveling.js'
+import { LEAVE_START_LEVEL, zoneOptions } from './leveling.js'
 import { MAX_LEVEL } from './data.js'
-import { DUNGEONS, dungeonLockReason, heldQuests, inRange, isQueuedFor, pendingQuests } from './dungeons.js'
+import { DUNGEONS, dungeonLockReason, errandTrips, heldQuests, inRange, isQueuedFor } from './dungeons.js'
+import { MAX_RANK, MIN_HONOR_KILLS, rankRange, rankTitle } from './honor.js'
+import { RESET_DAYS, dayOf, periodOf, periodStart } from './reset.js'
 
 const LEFT = ['head', 'neck', 'shoulder', 'back', 'chest', 'shirt', 'tabard', 'wrist']
 const RIGHT = ['hands', 'waist', 'legs', 'feet', 'finger1', 'finger2', 'trinket1', 'trinket2']
@@ -213,7 +215,7 @@ function renderStats(character, s) {
 function describeAction(character) {
   if (!character.zone) return 'Send this character to a zone to quest and collect loot.'
   const action = character.plannedAction
-  if (!action) return `Nothing in ${character.zone} it can beat. Try an easier zone.`
+  if (!action) return `Nothing in ${character.zone} it can beat; it moves to a zone it can farm next.`
   if (action.errand) {
     const where = action.errand.zone === null ? 'in town' : action.errand.zone === character.zone ? 'nearby' : `in ${action.errand.zone}`
     return `Picking up dungeon quests ${where}: ${action.errand.quests.map((id) => `"${getQuest(id).title}"`).join(', ')}.`
@@ -231,7 +233,7 @@ function objectiveName(o) {
 
 function renderQuestLog(character) {
   const ids = character.activeQuests
-  if (!ids.length) return el('p', { class: 'empty' }, `No quests left in ${character.zone} at this level.`)
+  if (!ids.length) return el('p', { class: 'empty' }, `No quests in ${character.zone} worth more than grinding at this level.`)
   return el('ul', { class: 'quest-log' }, ids.map((id) => {
     const quest = getQuest(id)
     const counts = questProgress(character, id)
@@ -246,14 +248,22 @@ function renderQuestLog(character) {
   }))
 }
 
-function renderRoute(character) {
-  const here = routeZone(character)
+const ZONE_CHOICES = 5
+
+// The zones the character weighs, most worth first. Below max level worth is XP, with gear it would wear
+// counted as XP; at max level it's power gained from gear.
+function renderZoneChoice(character) {
+  const options = zoneOptions(character).slice(0, ZONE_CHOICES)
+  const maxed = character.characterLevel >= MAX_LEVEL
+  const perHour = (value) => (maxed ? `${value.toFixed(1)} power/hr` : `${formatNumber(Math.round(value))} XP/hr`)
   return [
-    el('h3', {}, 'Leveling Path'),
-    el('p', { class: 'note' }, `While farming below level ${MAX_LEVEL}, ${character.characterName} moves on at these levels or when a zone runs out of quests. Sending them elsewhere lasts until then.`),
-    el('ol', { class: 'route' }, routeOf(character).map(([level, zone]) =>
-      el('li', { class: [zone === here && 'route-step', zone === character.zone && 'route-here'].filter(Boolean).join(' ') || null },
-        el('span', { class: 'route-level' }, String(level)), ` ${zone}`))),
+    el('h3', {}, 'Where to Farm'),
+    el('p', { class: 'note' }, maxed
+      ? `At level ${MAX_LEVEL} ${character.characterName} farms for gear: zones and dungeons are worth the power their upgrades add. It looks again after each upgrade, when it runs out of quests worth doing, or can't beat anything, and moves when another zone is worth clearly more.`
+      : `${character.characterName} levels where XP comes fastest, counting gear it would wear as XP too. Until level ${LEAVE_START_LEVEL} it stays in a starting zone. It looks again when it levels up, runs out of quests worth doing, or can't beat anything, and moves when another zone is worth clearly more. Sending it elsewhere lasts until then.`),
+    el('ol', { class: 'route' }, options.map(({ zone, value }, i) =>
+      el('li', { class: [i === 0 && 'route-step', zone === character.zone && 'route-here'].filter(Boolean).join(' ') || null },
+        `${zone} `, el('span', { class: 'route-level' }, perHour(value))))),
   ]
 }
 
@@ -262,7 +272,7 @@ function renderProgress(character) {
     el('h3', {}, 'Questing'),
     el('p', {}, `${character.questsDone.length} quests completed. ${describeAction(character)}`),
     character.zone && renderQuestLog(character),
-    renderRoute(character),
+    renderZoneChoice(character),
   )
 }
 
@@ -271,7 +281,7 @@ function renderProgress(character) {
 function renderDungeons(character, onQueue, onLeaveQueue) {
   const queue = character.dungeonQueue
   const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`
-  const pending = [...pendingQuests(character).entries()]
+  const pending = [...errandTrips(character)].map(([zone, trip]) => [zone, trip.quests])
   const toPickUp = pending.reduce((n, [, ids]) => n + ids.length, 0)
   const enterable = DUNGEONS.filter((d) => !dungeonLockReason(character, d))
     .sort((a, b) => inRange(character, b) - inRange(character, a) || b.level[0] - a.level[0])
@@ -335,11 +345,52 @@ function pvpDetail(e) {
   return `${e.zone}${honor}. ${start}${brawl}`
 }
 
+// PvP rank with progress to the next, and today's and the period's honor so far against the last period's.
+function renderRank(character, now = Date.now()) {
+  const { rank, rankPoints, highestRank, faction } = character
+  const titled = (r) => `${rankTitle(faction, r)} (Rank ${r})`
+  const [min, max] = rankRange(rank)
+  const share = rank >= MAX_RANK ? 1 : (rankPoints - min) / (max - min)
+  const icon = rank > 0 && el('img', {
+    class: 'rank-icon', src: `${ICON_URL}achievement_pvp_${faction === 'Horde' ? 'h' : 'a'}_${String(rank).padStart(2, '0')}.jpg`,
+    alt: '', width: 36, height: 36, loading: 'lazy', onerror: (e) => e.currentTarget.remove(),
+  })
+  const today = character.honorToday?.day === dayOf(now) ? character.honorToday : null
+  const period = character.honorPeriod?.period === periodOf(now) ? character.honorPeriod : null
+  const last = character.honorLastPeriod
+  const row = (label, kills, points, standing) => el('tr', {}, el('th', { scope: 'row' }, label), el('td', {}, kills), el('td', {}, points), el('td', {}, standing))
+  const resetIn = formatDuration((periodStart(periodOf(now) + 1) - now) / 3600000)
+  return [
+    el('div', { class: 'pvp-rank' },
+      icon,
+      el('div', { class: 'pvp-rank-text' },
+        el('strong', {}, rank > 0 ? titled(rank) : 'No rank'),
+        rank > 0 && el('div', { class: 'xp-bar', role: 'progressbar', 'aria-label': 'Rank progress', 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': Math.floor(share * 100) },
+          el('div', { class: 'xp-fill rank-fill', style: { width: `${share * 100}%` } })),
+        el('span', { class: 'note' }, [
+          rank >= MAX_RANK ? `${formatNumber(rankPoints)} rank points` : rank > 0 ? `${formatNumber(rankPoints)} / ${formatNumber(max)} rank points` : `Earn rank points with ${MIN_HONOR_KILLS} honorable kills in ${RESET_DAYS} days`,
+          highestRank > rank && `highest ${titled(highestRank)}`,
+          `resets in ${resetIn}`,
+        ].filter(Boolean).join(' · ')),
+      ),
+    ),
+    el('table', { class: 'pvp-days' },
+      el('thead', {}, el('tr', {}, el('td', {}), el('th', { scope: 'col' }, 'HKs'), el('th', { scope: 'col' }, 'Honor'), el('th', { scope: 'col' }, 'Standing'))),
+      el('tbody', {},
+        row('Today', formatNumber(today?.kills ?? 0), formatNumber(today?.points ?? 0), '—'),
+        row('Since reset', (period?.kills ?? 0) < MIN_HONOR_KILLS ? `${period?.kills ?? 0} / ${MIN_HONOR_KILLS}` : formatNumber(period.kills), formatNumber(period?.points ?? 0), '—'),
+        row('Last reset', last ? formatNumber(last.kills) : '—', last ? formatNumber(last.points) : '—', last?.standing ? `#${last.standing}` : '—'),
+      ),
+    ),
+  ]
+}
+
 function renderPvp(character) {
   const { honorableKills, honor, pvpKills, pvpDeaths, pvpLog } = character
   const tally = (label, value) => el('div', {}, el('dt', {}, label), el('dd', {}, formatNumber(value)))
   return el('section', { class: 'sheet-panel sheet-pvp', 'aria-label': 'World PvP' },
     el('h3', {}, 'World PvP'),
+    renderRank(character),
     el('dl', { class: 'pvp-tally' },
       tally('Honor', Math.floor(honor)),
       tally('Honorable Kills', honorableKills),

@@ -66,7 +66,7 @@ export function foeFor(mob, level) {
   }
 }
 
-// Two players fighting, both event by event on one clock, each one's blows landing on the other's actual
+// Two players fighting, both event by event on one clock, each one's hits landing on the other's actual
 // health: `kits[i]` fights with variant `variants[i]`, joining after `delays[i]` seconds. Whoever goes
 // down gets back up with full health and fights on, so both kill times are known: `downAt[i]` is when side
 // i went down (null if not within the fight time limit), `atDown[i]` both sides' results at that moment
@@ -580,7 +580,7 @@ function fighter(kit, foe, v) {
   function gainRage(amount) {
     if (cls === 'Warrior' || bear) rage = Math.min(100, rage + amount)
   }
-  // `ability` names it for the combat log. `struck` is the chance it was a landed melee blow, for a player
+  // `ability` names it for the combat log. `struck` is the chance it was a landed melee hit, for a player
   // foe's shields, thorns and armors. `to` is the player it lands on, if not the current foe.
   function damageMob(ability, amount, struck = 0, to = foe.link) {
     if (amount <= 0) return
@@ -718,7 +718,7 @@ function fighter(kit, foe, v) {
     const raw = foe.swing * armorFactor(armor, foe.level)
     takeHit(Math.max(0, raw * defense.mult - defense.block * Math.min(raw, stats.defenses.blockValue)), defense.land, defense.land)
   }
-  // A player foe's blow, already through this character's armor and avoidance, landing at time `now`;
+  // A player foe's hit, already through this character's armor and avoidance, landing at time `now`;
   // `from` is who struck it, with `ability`. Returns the health left.
   function receive(amount, struck, now, from, ability) {
     t = now
@@ -733,7 +733,7 @@ function fighter(kit, foe, v) {
     at(t, null) // a chance to react
     return hp
   }
-  // `land` is the chance the blow landed, for pushback; `struck` the chance it was a landed melee blow.
+  // `land` is the chance the hit landed, for pushback; `struck` the chance it was a landed melee hit.
   function takeHit(amount, land, struck, from, ability) {
     const soaked = Math.min(absorb, amount)
     absorb -= soaked
@@ -742,7 +742,7 @@ function fighter(kit, foe, v) {
     hp -= dmg
     gainRage((dmg * 2.5) / conversion)
     if (cast?.spell.pushback && land > 0) pushback(land)
-    // Shields, thorns and armors answer melee blows only.
+    // Shields, thorns and armors answer melee hits only.
     if (lsCharges > 0) {
       const used = Math.min(lsCharges, struck)
       lsCharges -= used

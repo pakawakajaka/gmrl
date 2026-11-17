@@ -191,14 +191,20 @@ function reportFights(fights) {
   if (more > 0) notify(`…and ${more} more world PvP encounter${more === 1 ? '' : 's'}. See them on `, el('a', { href: '#/pvp' }, 'World PvP'), '.')
 }
 
-// One notice per character, for its latest move along its leveling path.
+// One notice per character, for its latest move.
+const MOVE_REASONS = {
+  level: (t) => ` reached level ${t.level}`,
+  quests: (t) => ` ran out of quests worth doing in ${t.from}`,
+  gear: (t) => ` found ${t.from} worth less after its upgrades`,
+  stuck: (t) => ` couldn't beat anything in ${t.from}`,
+}
 function reportTravels(travels) {
   const latest = new Map()
   for (const t of travels) latest.set(t.character, { ...t, count: (latest.get(t.character)?.count ?? 0) + 1 })
-  for (const { character, from, to, reason, level, count } of latest.values()) {
-    const name = el('a', { href: `#/character/${character.id}` }, character.characterName)
-    const why = count > 1 ? ` followed its leveling path through ${count} zones` : reason === 'level' ? ` reached level ${level}` : ` finished the quests in ${from}`
-    notify(name, `${why} and moved on to ${to}.`)
+  for (const t of latest.values()) {
+    const name = el('a', { href: `#/character/${t.character.id}` }, t.character.characterName)
+    const why = t.count > 1 ? ` moved through ${t.count} zones` : MOVE_REASONS[t.reason]?.(t) ?? ' moved on'
+    notify(name, `${why} and went to ${t.to}.`)
   }
 }
 
@@ -213,15 +219,24 @@ function reportRuns(runs) {
   if (more > 0) notify(`…and ${more} more dungeon run${more === 1 ? '' : 's'}. See them on `, el('a', { href: '#/dungeons' }, 'Dungeons'), '.')
 }
 
+// One notice per character whose PvP rank changed at the honor reset.
+function reportRanks(ranks) {
+  for (const { character, from, to } of ranks) {
+    const name = el('a', { href: `#/character/${character.id}` }, character.characterName)
+    notify(name, to > 0 ? ` ${to > from ? 'rose' : 'fell'} to ${character.rankTitle} (Rank ${to}).` : ' lost its PvP rank.')
+  }
+}
+
 function gameTick() {
   if (stopped) return
-  const { levelUps, upgrades, fights, travels, errands, runs } = account.tick()
+  const { levelUps, upgrades, fights, travels, errands, runs, ranks } = account.tick()
   reportLevelUps(levelUps)
   reportTravels(travels)
   reportUpgrades(upgrades)
   reportFights(fights)
   reportRuns(runs)
-  if (levelUps.length || upgrades.length || fights.length || travels.length || errands.length || runs.length) {
+  reportRanks(ranks)
+  if (levelUps.length || upgrades.length || fights.length || travels.length || errands.length || runs.length || ranks.length) {
     if (!app.querySelector('dialog[open]')) render() // don't close an open modal; the next render catches up
     save()
   } else if (currentView().view === 'farm') {
@@ -311,6 +326,7 @@ function welcomeBack() {
     reportUpgrades(away.upgrades)
     reportTravels(away.travels)
     reportLevelUps(away.levelUps)
+    reportRanks(away.ranks)
     const battles = away.fights.filter((f) => f.kind !== 'evade')
     const kills = battles.reduce((sum, f) => sum + f.honor, 0)
     const honor = battles.reduce((sum, f) => sum + f.points, 0)

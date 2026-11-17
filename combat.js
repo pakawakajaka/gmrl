@@ -5,7 +5,6 @@ import { MAX_LEVEL } from './data.js'
 import { MOBS, ZONE_MOBS } from './gear-data.js'
 import { characterPower } from './power.js'
 import { MAX_FIGHT_SECONDS, buildKit, foeFor, manaCost, simulate, variantsFor } from './sim.js'
-import { talentKey } from './talents.js'
 import { grayLevel, zeroDifference } from './zones.js'
 
 export const getMob = (entry) => (Object.hasOwn(MOBS, entry) ? MOBS[entry] : undefined)
@@ -77,10 +76,19 @@ export function questXp(level, quest) {
 
 // Per-character fight numbers, rebuilt when level, gear, trained spells or talents change.
 const contexts = new WeakMap()
+const sameEntries = (a, b) => {
+  let n = 0
+  for (const k in a) {
+    if (a[k] !== b[k]) return false
+    n++
+  }
+  for (const k in b) if (--n < 0) return false
+  return true
+}
 export function combatOf(character) {
-  const key = `${character.characterLevel}|${Object.values(character.equipment).join()}|${character.spells.length}|${talentKey(character)}`
   let ctx = contexts.get(character)
-  if (ctx?.key === key) return ctx
+  if (ctx && ctx.level === character.characterLevel && ctx.spellCount === character.spells.length &&
+    sameEntries(ctx.equipment, character.equipment) && sameEntries(ctx.talents, character.talents)) return ctx
   const kit = buildKit(character)
   const { stats } = kit
   const level = character.characterLevel
@@ -95,7 +103,10 @@ export function combatOf(character) {
   const charged = Object.fromEntries(kit.upkeep.filter((s) => s.charges).map((s) => [s.name, manaCost(kit, s) / s.charges]))
   if (kit.lightningShield) charged['Lightning Shield'] = manaCost(kit, kit.lightningShield.spell) / kit.lightningShield.spell.charges
   ctx = {
-    key,
+    level,
+    spellCount: character.spells.length,
+    equipment: { ...character.equipment },
+    talents: { ...character.talents },
     kit,
     power: characterPower(character),
     health: stats.health,
@@ -106,6 +117,7 @@ export function combatOf(character) {
     manaBack: { overhead: mp5 * OVERHEAD_SECONDS + manaRegen * Math.max(0, OVERHEAD_SECONDS - FIVE_SECOND_RULE), drinking: manaRegen + mp5 + drink.mana / drink.seconds },
     fights: new Map(),
     pools: new Map(),
+    commonPools: new Map(),
     duels: new Map(), // see pvp.js
   }
   contexts.set(character, ctx)
@@ -153,7 +165,10 @@ function bestCycle(ctx, foe) {
 
 // How a fight against mob `entry` goes. Unbeatable mobs would kill the character before dying.
 export function fightAgainst(character, entry) {
-  const ctx = combatOf(character)
+  return fightIn(combatOf(character), character, entry)
+}
+
+function fightIn(ctx, character, entry) {
   let fight = ctx.fights.get(entry)
   if (fight) return fight
   const mob = MOBS[entry]
@@ -200,20 +215,47 @@ function levelBand(zoneName, level) {
   return band
 }
 
+// The band's most common mobs, making up COMMON_SHARE of its spawns.
+const COMMON_SHARE = 0.75
+const commonCache = new Map()
+function commonBand(zoneName, level) {
+  const key = `${zoneName}|${level}`
+  if (commonCache.has(key)) return commonCache.get(key)
+  const band = levelBand(zoneName, level).toSorted((a, b) => b[1] - a[1])
+  const enough = COMMON_SHARE * band.reduce((sum, [, weight]) => sum + weight, 0)
+  let count = 0
+  let sum = 0
+  while (sum < enough) sum += band[count++][1]
+  const common = band.slice(0, count)
+  commonCache.set(key, common)
+  return common
+}
+
+function poolOf(ctx, character, band) {
+  let total = 0
+  const weighted = []
+  for (const [entry, weight] of band) {
+    const fight = fightIn(ctx, character, entry)
+    if (fight.beatable) weighted.push({ fight, weight, upTo: (total += weight) })
+  }
+  return { total, weighted }
+}
+
 // The beatable mobs a character grinds in the zone, weighted by how often they're around.
 // { total, weighted: [{ fight, weight, upTo }] }
 export function grindPool(character, zoneName) {
   const ctx = combatOf(character)
   let pool = ctx.pools.get(zoneName)
-  if (pool) return pool
-  let total = 0
-  const weighted = []
-  for (const [entry, weight] of levelBand(zoneName, character.characterLevel)) {
-    const fight = fightAgainst(character, entry)
-    if (fight.beatable) weighted.push({ fight, weight, upTo: (total += weight) })
-  }
-  pool = { total, weighted }
-  ctx.pools.set(zoneName, pool)
+  if (!pool) ctx.pools.set(zoneName, (pool = poolOf(ctx, character, levelBand(zoneName, character.characterLevel))))
+  return pool
+}
+
+// The same from just the zone's most common mobs: about what grinding there is like, for weighing zones
+// at a fraction of the fights.
+export function commonPool(character, zoneName) {
+  const ctx = combatOf(character)
+  let pool = ctx.commonPools.get(zoneName)
+  if (!pool) ctx.commonPools.set(zoneName, (pool = poolOf(ctx, character, commonBand(zoneName, character.characterLevel))))
   return pool
 }
 

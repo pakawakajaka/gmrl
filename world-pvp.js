@@ -1,6 +1,10 @@
-// The World PvP page: every recent fight and escape across the account, and each one in detail.
+// The World PvP page: the standings toward the next honor reset, every recent fight and escape across the
+// account, and each one in detail.
 import { CLASSES, RACES, classIcon } from './data.js'
+import { ENCOUNTER_DETAIL_SIZE, ENCOUNTER_LOG_SIZE } from './account.js'
 import { el, formatChance, formatDuration, formatNumber } from './dom.js'
+import { MIN_HONOR_KILLS, earnedIn, standings } from './honor.js'
+import { periodOf, periodStart } from './reset.js'
 
 const factionOf = (m) => RACES[m.race].faction
 const sideOf = (e, side) => e.members.filter((m) => m.side === side)
@@ -55,6 +59,45 @@ function outcome(e) {
 
 const resultClass = (e) => `encounter-${e.winner === null ? 'none' : factionOf(sideOf(e, e.winner)[0]).toLowerCase()}`
 
+// Each faction's standings so far toward the next honor reset (honor.js): who's in, by honor, then everyone
+// still short of the kills.
+function renderStandings(characters, now = Date.now()) {
+  const factions = ['Alliance', 'Horde'].filter((f) => characters.some((c) => c.faction === f))
+  if (!factions.length) return null
+  const period = periodOf(now)
+  const resetIn = formatDuration((periodStart(period + 1) - now) / 3600000)
+  return el('section', { class: 'pvp-standings', 'aria-labelledby': 'standings-title' },
+    el('h3', { id: 'standings-title' }, 'Reset standings'),
+    el('p', { class: 'note' }, `Resets in ${resetIn}. Characters with ${MIN_HONOR_KILLS} or more honorable kills since the last reset are ranked by honor and earn rank points by where they finish; the rest only lose rank points.`),
+    el('div', { class: 'standings-factions' }, factions.map((faction) => renderFactionStandings(characters, faction, period))),
+  )
+}
+
+function renderFactionStandings(characters, faction, period) {
+  const ranked = standings(characters, faction, period)
+  const short = characters
+    .filter((c) => c.faction === faction && !ranked.includes(c))
+    .sort((a, b) => earnedIn(b, period).points - earnedIn(a, period).points || earnedIn(b, period).kills - earnedIn(a, period).kills)
+  const row = (c, standing) => {
+    const { kills, points } = earnedIn(c, period)
+    return el('tr', { class: standing ? null : 'standings-out' },
+      el('td', {}, standing ? `#${standing}` : '\u2014'),
+      el('th', { scope: 'row' },
+        el('a', { href: `#/character/${c.id}`, style: { '--class-color': c.classColor } }, c.characterName),
+        c.rank > 0 && el('span', { class: 'standings-title' }, c.rankTitle),
+      ),
+      el('td', {}, standing ? formatNumber(kills) : `${kills} / ${MIN_HONOR_KILLS}`),
+      el('td', {}, formatNumber(Math.floor(points))),
+    )
+  }
+  return el('table', { class: `standings standings-${faction.toLowerCase()}` },
+    el('caption', {}, faction),
+    el('thead', {}, el('tr', {},
+      el('th', { scope: 'col' }, '#'), el('th', { scope: 'col' }, 'Character'), el('th', { scope: 'col' }, 'HKs'), el('th', { scope: 'col' }, 'Honor'))),
+    el('tbody', {}, ranked.map((c, i) => row(c, i + 1)), short.map((c) => row(c, 0))),
+  )
+}
+
 function renderList(account) {
   const { encounters } = account
   const fights = encounters.filter((e) => e.kind !== 'evade')
@@ -62,7 +105,12 @@ function renderList(account) {
   const sum = (f) => fights.reduce((total, e) => total + e.members.reduce((n, m) => n + f(m), 0), 0)
   const tally = (label, value) => el('div', {}, el('dt', {}, label), el('dd', {}, formatNumber(value)))
   return el('section', { class: 'world-pvp', 'aria-labelledby': 'view-title' },
-    el('div', { class: 'view-header' }, el('h2', { id: 'view-title' }, 'World PvP')),
+    el('div', { class: 'view-header' },
+      el('div', {},
+        el('h2', { id: 'view-title' }, 'World PvP'),
+        el('p', { class: 'view-subtitle' }, `Shows only the last ${ENCOUNTER_LOG_SIZE} encounters; the totals below count just those.`),
+      ),
+    ),
     el('dl', { class: 'pvp-tally encounter-tally' },
       tally('Fights', fights.length),
       tally('Escapes', encounters.length - fights.length),
@@ -72,9 +120,12 @@ function renderList(account) {
       tally('Honor', Math.floor(sum((m) => m.points ?? 0))),
       tally('Deaths', sum((m) => (m.out === 'died' ? 1 : 0))),
     ),
+    renderStandings(account.characters),
     encounters.length
       ? [
-        el('p', { class: 'note' }, `The last ${plural(encounters.length, 'encounter')} between your characters, newest first. Select one to see how it played out.`),
+        el('p', { class: 'note' }, `The last ${plural(encounters.length, 'encounter')} between your characters, newest first. Select one to see how it played out.`,
+          el('span', { class: 'info-mark inline', tabindex: 0, 'aria-label': 'Which encounters keep a combat log', 'aria-describedby': 'log-note' }, '!',
+            el('span', { id: 'log-note', class: 'tooltip', role: 'tooltip' }, `The newest ${ENCOUNTER_DETAIL_SIZE} encounters show the full combat log, every hit and heal. Older ones show a timeline.`))),
         el('ul', { class: 'encounter-list' }, encounters.map(renderRow)),
       ]
       : el('p', { class: 'empty' }, 'No encounters yet. Characters of opposite factions farming the same contested zone run into each other.'),
@@ -263,7 +314,7 @@ function renderBreakdown(e) {
   )
 }
 
-// The combat log, blow by blow, with who opened, joined, died and how it ended, colored like Warcraft Logs.
+// The combat log, hit by hit, with who opened, joined, died and how it ended, colored like Warcraft Logs.
 function renderLog(e) {
   const who = (i) => actor(e.members[i])
   const line = ([, kind, from, to, a, amount, extra]) => {
@@ -282,7 +333,7 @@ function renderLog(e) {
   ].sort((x, y) => x.t - y.t || x.order - y.order)
   return el('section', { class: 'sheet-panel', 'aria-label': 'Combat log' },
     el('h3', {}, 'Combat log'),
-    el('p', { class: 'note' }, 'Every blow lands for its average: the fight is simulated without crits or misses. Health is the target\'s after each line.'),
+    el('p', { class: 'note' }, 'Every hit lands for its average: the fight is simulated without crits or misses. Health is the target\'s after each line.'),
     el('ol', { class: 'encounter-log' }, rows.map((r) =>
       el('li', { class: r.mark ? 'encounter-mark' : null },
         el('span', { class: 'encounter-time' }, stamp(r.t)),

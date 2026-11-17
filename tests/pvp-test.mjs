@@ -52,7 +52,7 @@ const run = (seed, level) => {
 }
 const t0 = performance.now()
 const { acc: a, fights: events, travels: moved } = run(1)
-const travelers = new Set(moved.map((t) => t.character.id)) // left on their leveling path mid-run
+const travelers = new Set(moved.map((t) => t.character.id)) // moved to another zone mid-run
 const ms = performance.now() - t0
 const fights = events.filter((f) => f.kind !== 'evade')
 check('fights happen over 10 hours', fights.length > 0, `${fights.length} fights (${fights.filter((f) => f.kind === 'brawl').length} brawls) in ${ms.toFixed(0)} ms`)
@@ -85,15 +85,13 @@ check('attacker log entry has guess and real odds', entry && entry.guess >= 0.4 
 const joined = a.characters.flatMap((c) => c.pvpLog).find((e) => e.joined)
 check('joiners logged with sizes', !fights.some((f) => f.kind === 'brawl') || (joined && joined.size.length === 2 && Number.isInteger(joined.kills)), JSON.stringify(joined))
 
-// Fights cost farming time: the same 10 hours in the zone earn less than without fights. Loot luck swings
-// one run by more than the fights cost, so it's summed over a few seeds. Level 60s, who no longer follow
-// their leveling paths, so everyone stays in the zone.
+// Fights cost farming time: the same 10 hours earn less than without fights. Loot luck swings one run by
+// more than the fights cost, so it's summed over a few seeds. Level 60s, who don't level up mid-run.
 const earned = (acc) => acc.characters.reduce((s, c) => s + c.copper, 0)
 let fought = 0
 let farmed = 0
 for (const seed of [1, 2, 3]) {
   const loud = run(seed, 60)
-  check(`seed ${seed}: nobody moved`, !loud.travels.length)
   fought += earned(loud.acc)
   const quiet = account(undefined, 60)
   Math.random = seeded(seed + 1000)

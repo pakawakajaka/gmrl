@@ -27,13 +27,18 @@ export function gearPower(character) {
   return score * GEAR_POWER[profileOf(character)]
 }
 
-// { solo, party }. Solo power ("power level" in the UI) decides farming speed; party power is for future
-// dungeon and raid grouping.
+// Solo power that `score` more item score (see itemScore) would add.
+export const scorePower = (character, score) =>
+  score * GEAR_POWER[profileOf(character)] * CLASS_SOLO[character.characterClass] * ROLE_SOLO[character.characterRole]
+
+// { solo, party, base }. Solo power ("power level" in the UI) decides farming speed; party power decides how
+// fast a dungeon group clears. Base is before class and role.
 export function characterPower(character) {
   const base = levelPower(character.characterLevel) * LEVEL_SHARE[profileOf(character)] + gearPower(character)
   return {
     solo: base * CLASS_SOLO[character.characterClass] * ROLE_SOLO[character.characterRole],
     party: base * ROLE_PARTY[character.characterRole],
+    base,
   }
 }
 
