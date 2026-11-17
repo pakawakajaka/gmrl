@@ -36,7 +36,8 @@ export function itemKey(raw) {
   return typeof raw === 'string' && /^\d+:\d+$/.test(raw) && getItem(raw) ? raw : undefined
 }
 
-const baseId = (key) => Number(String(key).split(':')[0])
+// The item id of an owned item's key, without its suffix.
+export const baseId = (key) => Number(String(key).split(':')[0])
 
 // Gives a random-suffix item its suffix (weighted by the real Classic chances); other items are unchanged.
 export function rollSuffix(id, random = Math.random) {
@@ -299,12 +300,14 @@ export function rollMobLoot(entry, random = Math.random) {
 }
 
 // ---- Quests ----
-// Gear a quest gives this character: every usable fixed reward plus its pick of the choices.
+// Gear a quest gives this character: every usable fixed reward plus its pick of the choices (the item it
+// wants, if that's one).
 export function questRewardsFor(character, quest) {
   const usable = (id) => levelToUse(character, getItem(id)) < Infinity
   const rewards = (quest.reward ?? []).filter(usable)
   const choices = (quest.choice ?? []).filter(usable)
-  if (choices.length) {
+  if (character.wanted && choices.includes(character.wanted)) rewards.push(character.wanted)
+  else if (choices.length) {
     const value = (id) => {
       const item = getItem(id)
       return Math.max(...SLOTS_BY_INVENTORY_TYPE[item.slot].map((slot) => itemScore(character, item, slot)))

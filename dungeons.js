@@ -4,13 +4,14 @@
 // Queued characters keep farming until five of a faction are waiting for the same dungeon and make a group
 // that can clear it (formGroups). Dungeon quests take slots in the quest log like any other (see quests.js).
 import { CLASSES, MAX_LEVEL, MIN_LEVEL, RACES, ROLES } from './data.js'
-import { CLASS_BITS, DUNGEONS, DUNGEON_QUESTS, RACE_BITS, bestLoadout, canUseNow, getItem, questRewardsFor, rollMobLoot } from './gear.js'
+import { CLASS_BITS, DUNGEONS, DUNGEON_QUESTS, RACE_BITS, baseId, bestLoadout, canUseNow, getItem, questRewardsFor, rollMobLoot } from './gear.js'
 import { getMob, killXp, mobLevelFor, questXp } from './combat.js'
 import { levelPower } from './power.js'
 import { QUEST_LOG_SIZE, QUEST_SECONDS, logRoom, makeRoom, questLogIds, zoneQuestSet } from './quests.js'
 import { zoneValue } from './leveling.js'
 import { lootTargets, rewardGain, runGear, worth } from './value.js'
 import { talentKey } from './talents.js'
+import { wantedPlaces } from './wanted.js'
 import { getZone } from './zones.js'
 
 export { DUNGEONS }
@@ -77,7 +78,7 @@ function canTake(character, id, done, groups) {
 // giver is: Map(zone name, or null for a city -> quest ids).
 const pendingCache = new WeakMap()
 export function pendingQuests(character) {
-  const key = `${character.characterLevel}|${character.questsDone.length}|${character.dungeonQuests.length}`
+  const key = `${character.characterLevel}|${character.questsDone.length}|${character.dungeonQuests.join()}`
   const cached = pendingCache.get(character)
   if (cached?.key === key) return cached.byZone
   const byZone = new Map()
@@ -115,13 +116,14 @@ function pickupValue(character, id, w) {
 }
 
 // The pickup trips worth making: Map(zone, or null for a city -> { quests, seconds, value }) for the quests
-// the character wants (wantedQuests) and has room for in its log (logRoom, keeping its zone's quests; chain
-// steps are done on the spot and take none), by where their giver is. A trip is worth making when its quests
+// the character wants (wantedQuests) and has room for in its log (logRoom, keeping its zone's quests and
+// never swapping for a quest worth the same, which would make trips back and forth forever; chain steps
+// are done on the spot and take none), by where their giver is. A trip is worth making when its quests
 // are worth ERRAND_MARGIN times the farming the trip costs where the character is; skipped ones wait until
-// more quests there add up. Recomputed when zone, level, gear, talents or quests change.
+// more quests there add up. Recomputed when zone, level, gear, talents, quests or the wanted item change.
 const tripCache = new WeakMap()
 export function errandTrips(character) {
-  const key = `${character.zone}|${character.characterLevel}|${character.questsDone.length}|${questLogIds(character).join()}|${Object.values(character.equipment).join()}|${talentKey(character)}`
+  const key = `${character.zone}|${character.characterLevel}|${character.questsDone.length}|${questLogIds(character).join()}|${Object.values(character.equipment).join()}|${talentKey(character)}|${character.wanted}`
   const cached = tripCache.get(character)
   if (cached?.key === key) return cached.trips
   const trips = new Map()
@@ -131,7 +133,7 @@ export function errandTrips(character) {
     const farming = zoneValue(character, character.zone) / 3600
     const here = zoneQuestSet(character.zone)
     for (const [zone, wanted] of byZone) {
-      const take = logRoom(character, (id) => here.has(id), w)
+      const take = logRoom(character, (id) => here.has(id), w, false)
       const quests = wanted
         .map((id) => ({ id, value: pickupValue(character, id, w) }))
         .sort((a, b) => b.value - a.value)
@@ -188,6 +190,10 @@ export function runErrand(character, errand) {
 export const heldQuests = (character, name) => character.dungeonQuests.filter((id) => DUNGEON_QUESTS[id].dungeon === name)
 
 const runSeconds = (dungeon, pace) => dungeon.minutes * 60 * Math.min(3, Math.max(0.5, pace ** -1.5))
+const paceGuess = (character, dungeon) => (PACE_GUESS * character.power.base) / levelPower(bossLevel(dungeon))
+
+// How long the character guesses a clear of the dungeon takes, in hours.
+export const runHours = (character, dungeon) => runSeconds(dungeon, paceGuess(character, dungeon)) / 3600
 
 // What one clear of the dungeon is worth to the character per hour (see value.js), or 0 if it guesses its
 // group would wipe: its share of the kills' XP and of the upgrades that drop, and the XP and reward gear of
@@ -196,13 +202,13 @@ const valueCaches = new WeakMap()
 export function dungeonValue(character, dungeon) {
   const pending = [...pendingQuests(character).values()].flat().filter((id) => !DUNGEON_QUESTS[id].step)
   const quests = [...heldQuests(character, dungeon.name), ...pending.filter((id) => DUNGEON_QUESTS[id].dungeon === dungeon.name)]
-  const key = `${character.characterLevel}|${character.characterSpec}|${character.characterRole}|${Object.values(character.equipment).join()}|${talentKey(character)}|${quests.join()}`
+  const key = `${character.characterLevel}|${character.characterSpec}|${character.characterRole}|${Object.values(character.equipment).join()}|${talentKey(character)}|${quests.join()}|${character.wanted}`
   let values = valueCaches.get(character)
   if (!values) valueCaches.set(character, (values = new Map()))
   const cached = values.get(dungeon.name)
   if (cached?.key === key) return cached.value
   let value = 0
-  const pace = (PACE_GUESS * character.power.base) / levelPower(bossLevel(dungeon))
+  const pace = paceGuess(character, dungeon)
   if (pace >= MIN_PACE) {
     const level = character.characterLevel
     const kills = killLists.get(dungeon.name)
@@ -227,14 +233,16 @@ export function dungeonValue(character, dungeon) {
 export const dungeonLoot = (character, dungeon) => lootTargets(character, killLists.get(dungeon.name), NEED_SHARE)
 
 // Dungeons a character queues for on its own, most worth first: [{ name, value }] for those in its level
-// range worth more than farming its zone. Recomputed when level, gear, talents, quests or zone change.
+// range, or where its wanted item comes from, worth more than farming its zone. Recomputed when level, gear,
+// talents, quests, zone or the wanted item change.
 const wantCache = new WeakMap()
 export function autoDungeons(character) {
   if (!getZone(character.zone)) return []
-  const key = `${character.zone}|${character.characterLevel}|${character.characterSpec}|${character.characterRole}|${Object.values(character.equipment).join()}|${character.questsDone.length}|${character.dungeonQuests.join()}|${talentKey(character)}`
+  const key = `${character.zone}|${character.characterLevel}|${character.characterSpec}|${character.characterRole}|${Object.values(character.equipment).join()}|${character.questsDone.length}|${character.dungeonQuests.join()}|${talentKey(character)}|${character.wanted}`
   const cached = wantCache.get(character)
   if (cached?.key === key) return cached.dungeons
-  const candidates = DUNGEONS.filter((d) => inRange(character, d))
+  const wanted = wantedPlaces(character).dungeons
+  const candidates = DUNGEONS.filter((d) => inRange(character, d) || (wanted.has(d.name) && !dungeonLockReason(character, d)))
   const farming = candidates.length ? zoneValue(character, character.zone) : 0
   const dungeons = candidates
     .map((d) => ({ name: d.name, value: dungeonValue(character, d) }))
@@ -339,7 +347,7 @@ function wouldEquip(character, key) {
 // One dungeon run. Every kill pays each member its share of the XP and money; every drop is rolled for:
 // members who'd wear it right away roll Need, otherwise everyone rolls Greed. A group too weak for the dungeon
 // gets part way and wipes, with no quest credit, and doesn't queue again on its own until it levels or picks
-// up quests. Members finish by turning in the dungeon's quests.
+// up quests. Members who want an item (see Character.wanted) roll Need on it too. Members finish by turning in the dungeon's quests.
 // Returns { record, members, results } with each member's { levels, upgrades, travel }.
 export function runDungeon(members, dungeon, now, random = Math.random) {
   const pace = groupPace(members, dungeon)
@@ -364,7 +372,7 @@ export function runDungeon(members, dungeon, now, random = Math.random) {
     })
     for (let k = 0; k < count; k++) {
       for (const item of rollMobLoot(entry, random)) {
-        const needers = members.filter((c) => wouldEquip(c, item))
+        const needers = members.filter((c) => wouldEquip(c, item) || c.wanted === baseId(item))
         const pool = needers.length ? needers : members
         const winner = pool[Math.floor(random() * pool.length)]
         const index = members.indexOf(winner)
@@ -379,6 +387,7 @@ export function runDungeon(members, dungeon, now, random = Math.random) {
     const level = c.characterLevel
     const outcome = c.finishDungeon({ ...shares[i], xp: Math.round(shares[i].xp), copper: Math.round(shares[i].copper), quests, wornBefore: wornBefore[i] }, now)
     c.timeBank -= seconds
+    c.restingAfter = dungeon.name
     c.dungeonQueue = null
     if (success) c.dungeonClears[dungeon.name] = (c.dungeonClears[dungeon.name] ?? 0) + 1
     else leaveQueue(c)

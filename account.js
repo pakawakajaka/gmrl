@@ -7,6 +7,7 @@ import { encounterRecord, restoreEncounter, worldPvp } from './pvp.js'
 import { RUN_LOG_SIZE, autoQueue, formGroups, joinQueue, leaveQueue, restoreRun } from './dungeons.js'
 import { honorResets } from './honor.js'
 import { periodOf, periodStart } from './reset.js'
+import { baseId } from './gear.js'
 
 const ID_PATTERN = /^[\w-]+$/
 const MS_PER_HOUR = 3600 * 1000
@@ -21,7 +22,9 @@ export const ENCOUNTER_DETAIL_SIZE = 10 // the newest encounters that keep their
 //    Older saves start at rank 0.
 // 3: the honor reset is every 3 days: honorPeriod counts kills and points toward it, honorLastPeriod
 //    replaces honorLastDay. Older saves count honorToday toward its period and drop honorLastDay.
-export const SAVE_VERSION = 3
+// 4: characters can want an item (wanted) and keep what they got by wanting it (kept), and remember the
+//    dungeon they're back from (restingAfter). Older saves want nothing and rest after nothing.
+export const SAVE_VERSION = 4
 // Accounts that get dev tools (e.g. Save to file). Not a security boundary: the save endpoint is dev-server only.
 const DEV_ACCOUNT_IDS = new Set(['379d1f11-f7ac-4e09-ab3c-b51930ba2aa8'])
 
@@ -58,7 +61,8 @@ export default class Account {
   // way, and the honor reset (honor.js) at the end of each period (reset.js) in between. Returns who leveled up, new
   // gear still worn, the PvP fights (each with the `id` of its encounter record), zone moves
   // ({ character, from, to, reason, level }), dungeon quest pickup trips ({ character, zone, quests, steps }),
-  // dungeon runs (records, see runDungeon) and PvP rank changes ({ character, from, to }). Pays out at most
+  // dungeon runs (records, see runDungeon), PvP rank changes ({ character, from, to }) and wanted items got
+  // ({ character, item }). Pays out at most
   // the last MAX_AWAY_HOURS: `awayHours` is the whole time since the last tick, `hours` the part paid out.
   // Resets in the unpaid part still happen, with no honor earned.
   tick(now = Date.now(), random = Math.random) {
@@ -67,10 +71,11 @@ export default class Account {
     const start = now - hours * MS_PER_HOUR
     const resetFrom = this.lastTick // resets are done up to here
     this.lastTick = Math.max(this.lastTick, now)
-    const result = { awayHours, hours, levelUps: [], upgrades: [], fights: [], travels: [], errands: [], runs: [], ranks: [] }
+    const result = { awayHours, hours, levelUps: [], upgrades: [], fights: [], travels: [], errands: [], runs: [], ranks: [], wanted: [] }
     const leveled = new Set()
     const upgraded = new Map(this.characters.map((c) => [c, new Set()]))
     const ranks = new Map(this.characters.map((c) => [c, c.rank]))
+    const wanted = new Map(this.characters.filter((c) => c.wanted).map((c) => [c, c.wanted]))
     honorResets(this.characters, resetFrom, start)
     // Slices end at each reset, so a period's honor is all in before it.
     for (let from = start; from < now;) {
@@ -105,6 +110,10 @@ export default class Account {
     }
     result.levelUps = [...leveled]
     for (const [character, from] of ranks) if (character.rank !== from) result.ranks.push({ character, from, to: character.rank })
+    for (const [character, id] of wanted) {
+      const item = character.kept.find((key) => baseId(key) === id)
+      if (character.wanted !== id && item) result.wanted.push({ character, item })
+    }
     if (this.encounters.length > ENCOUNTER_LOG_SIZE) this.encounters.length = ENCOUNTER_LOG_SIZE
     if (this.dungeonRuns.length > RUN_LOG_SIZE) this.dungeonRuns.length = RUN_LOG_SIZE
     trimLogs(this.encounters)
@@ -145,6 +154,15 @@ export default class Account {
     if (!character) return
     this.tick(now)
     leaveQueue(character)
+  }
+
+  // Sets the item the character goes after (see Character.setWanted), or clears it with null. Returns false
+  // if it can't.
+  wantItem(characterId, key, now = Date.now()) {
+    const character = this.getCharacter(characterId)
+    if (!character) return false
+    this.tick(now)
+    return character.setWanted(key)
   }
 
   getCharacter(id) {
@@ -213,7 +231,7 @@ export default class Account {
       const c = { ...saved, characterSpec: saved.characterSpec ?? defaultSpec(saved.characterClass, saved.characterRole) }
       if (Object.keys(Character.validate(c)).length > 0) return null
       seen.add(c.id)
-      const character = new Character({ ...c, characterXp: 0, zone: null, copper: 0, spells: undefined, talents: {}, equipment: {}, bag: [], questsDone: [], questLog: {}, timeBank: 0, lootLog: [], honorableKills: 0, honor: 0, honorToday: null, honorPeriod: null, rankPoints: 0, highestRank: 0, honorLastPeriod: null, pvpKills: 0, pvpDeaths: 0, pvpLog: [], pvpReadyAt: 0, hearthReadyAt: 0, dungeonQuests: [], dungeonQueue: null, dungeonClears: {}, queueDeclined: null })
+      const character = new Character({ ...c, characterXp: 0, zone: null, copper: 0, spells: undefined, talents: {}, equipment: {}, bag: [], questsDone: [], questLog: {}, timeBank: 0, lootLog: [], honorableKills: 0, honor: 0, honorToday: null, honorPeriod: null, rankPoints: 0, highestRank: 0, honorLastPeriod: null, pvpKills: 0, pvpDeaths: 0, pvpLog: [], pvpReadyAt: 0, hearthReadyAt: 0, dungeonQuests: [], dungeonQueue: null, dungeonClears: {}, queueDeclined: null, restingAfter: null, wanted: null, kept: [] })
       const xp = Number(c.characterXp)
       if (Number.isFinite(xp) && xp > 0 && xp < character.xpToNextLevel) character.characterXp = xp
       if (!zoneLockReason(character, getZone(c.zone))) character.zone = c.zone

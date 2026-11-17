@@ -1,5 +1,5 @@
 import { badge, el, formatChance, formatDuration, formatNumber, money } from './dom.js'
-import { CLASS_BITS, DUNGEON_QUESTS, INVENTORY_TYPES, QUALITIES, QUEST_ITEMS, RACE_BITS, SLOTS, getItem, getQuest, itemTypeName, offSpecGear, questRewardsFor } from './gear.js'
+import { CLASS_BITS, DUNGEON_QUESTS, INVENTORY_TYPES, QUALITIES, QUEST_ITEMS, RACE_BITS, SLOTS, baseId, getItem, getQuest, itemTypeName, levelToUse, offSpecGear, questRewardsFor } from './gear.js'
 import { SCHOOLS, STAT_NAMES, characterStats } from './stats.js'
 import { drinkFor, foodFor, getMob, respawnWait } from './combat.js'
 import { QUEST_LOG_SIZE, activeQuests, objectivesOf, questKills, questLogIds, questPlan, questProgress, questZone, rewardWorth, zoneQuestOffers } from './quests.js'
@@ -9,8 +9,9 @@ import { renderTalentTile } from './talents-view.js'
 import { talentKey } from './talents.js'
 import { zoneOptions } from './leveling.js'
 import { MAX_LEVEL } from './data.js'
-import { DUNGEONS, autoDungeons, dungeonLockReason, dungeonLoot, dungeonValue, errandTrips, getDungeon, heldQuests, inRange, isQueuedFor, pendingQuests } from './dungeons.js'
-import { grindTargets, grindValue, huntedMobs, itemGain, lootTargets, rewardGain, worth } from './value.js'
+import { DUNGEONS, autoDungeons, dungeonLockReason, dungeonLoot, dungeonValue, errandTrips, getDungeon, heldQuests, inRange, isQueuedFor, pendingQuests, runHours } from './dungeons.js'
+import { grindTargets, grindValue, huntedMobs, itemPower, lootTargets, rewardGain, worth } from './value.js'
+import { SEARCH_MIN_LENGTH, isWorldDrop, itemSources, owns, placeDrops, searchItems, wantable } from './wanted.js'
 import { MAX_RANK, MIN_HONOR_KILLS, rankRange, rankTitle } from './honor.js'
 import { RESET_DAYS, dayOf, periodOf, periodStart } from './reset.js'
 
@@ -26,7 +27,11 @@ const signed = (n) => `${n >= 0 ? '+' : ''}${n}`
 const pct = (n) => `${n.toFixed(2)}%`
 const ICON_URL = 'https://wow.zamimg.com/images/wow/icons/large/'
 
-export function renderCharacterSheet({ character, onDelete, onQueue, onLeaveQueue }) {
+// The character on the sheet and the handler that sets the item it wants, for item rows anywhere on it.
+let sheet = { character: null, onWant: null }
+
+export function renderCharacterSheet({ character, onDelete, onQueue, onLeaveQueue, onWant }) {
+  sheet = { character, onWant }
   const stats = characterStats(character)
   const deleteDialog = renderDeleteDialog(character, onDelete)
   return el('section', { class: 'character-sheet', style: { '--class-color': character.classColor }, 'aria-labelledby': 'view-title' },
@@ -268,7 +273,7 @@ const QUEST_OFFERS = 10
 // it and dungeon quests for dungeons in its level range. Kept until what they depend on changes.
 const offerCache = new WeakMap()
 function questOffers(character) {
-  const key = `${character.characterLevel}|${character.characterSpec}|${character.characterRole}|${Object.values(character.equipment).join()}|${talentKey(character)}|${character.questsDone.length}|${questLogIds(character).join()}`
+  const key = `${character.characterLevel}|${character.characterSpec}|${character.characterRole}|${Object.values(character.equipment).join()}|${talentKey(character)}|${character.questsDone.length}|${questLogIds(character).join()}|${character.wanted}`
   const cached = offerCache.get(character)
   if (cached?.key === key) return cached.offers
   const dungeon = [...pendingQuests(character)].flatMap(([zone, ids]) => ids.map((id) => ({
@@ -332,7 +337,15 @@ const FOCUS_ZONES = 6
 const FOCUS_DUNGEONS = 8
 const FOCUS_DROPS = 4 // per zone or dungeon
 const FOCUS_QUEST_DROPS = 2 // from the kills a quest takes
-const shown = (target) => target.power >= 0.05 // shows as at least +0.1 power
+// Rows worth listing: ones that show as at least +0.1 power, and the wanted item.
+const shownFor = (character) => (target) => target.power >= 0.05 || baseId(target.id) === character.wanted
+
+// Quest and dungeon lists leave out bind-on-equip world drops (any mob around their level may drop them)
+// that would take more than LONG_SHOT_HOURS of doing that quest or running that dungeon, unless wanted;
+// zone lists keep them. `hours` is how long one try (the quest, or a run) takes.
+const LONG_SHOT_HOURS = 7 * 24
+const notLongShot = (character, hours) => (target) =>
+  baseId(target.id) === character.wanted || getItem(target.id).binds !== 2 || !isWorldDrop(target.id) || hours / target.chance <= LONG_SHOT_HOURS
 
 // Tooltips in a scrolling list would be clipped by it, so they're fixed to the viewport next to the item.
 function placeTooltip(event) {
@@ -352,7 +365,7 @@ const focusScroll = (key, items) => el('ul', { class: 'focus-list focus-scroll',
 // The rows behind the lists, kept until what they depend on changes (the sheet re-renders on every event).
 const focusCache = new WeakMap()
 function focusRows(character) {
-  const key = `${character.zone}|${character.characterLevel}|${character.characterSpec}|${character.characterRole}|${Object.values(character.equipment).join()}|${talentKey(character)}|${character.questsDone.length}|${character.dungeonQuests.join()}|${character.dungeonQueue?.dungeons.join() ?? ''}`
+  const key = `${character.zone}|${character.characterLevel}|${character.characterSpec}|${character.characterRole}|${Object.values(character.equipment).join()}|${talentKey(character)}|${character.questsDone.length}|${character.dungeonQuests.join()}|${character.dungeonQueue?.dungeons.join() ?? ''}|${character.wanted}`
   const cached = focusCache.get(character)
   if (cached?.key === key) return cached
   const zones = zoneOptions(character)
@@ -372,12 +385,14 @@ function focusQuests(character, zones) {
   return rows.slice(0, FOCUS_QUESTS).map((row) => {
     const kills = questKills(character, row.id)
     const rares = kills.filter(([entry]) => respawnWait(entry)).map(([entry]) => `${getMob(entry).name} (about every ${formatDuration(respawnWait(entry) / 3600)})`)
-    return { ...row, rares, drops: lootTargets(character, kills).filter(shown) }
+    const hours = (questPlan(character, row.id)?.seconds ?? 0) / 3600
+    return { ...row, rares, drops: lootTargets(character, kills).filter(shownFor(character)).filter(notLongShot(character, hours)) }
   })
 }
 
 // Its zone, then the other zones it weighs whose mobs drop upgrades, most worth first.
 function focusZones(character, zones) {
+  const shown = shownFor(character)
   const rows = [{ zone: character.zone, drops: grindTargets(character, character.zone).filter(shown) }]
   for (const { zone } of zones) {
     if (rows.length >= FOCUS_ZONES) break
@@ -390,9 +405,11 @@ function focusZones(character, zones) {
 
 // Dungeons it's queued for, then the others it can enter, clear and get upgrades from, most worth first.
 function focusDungeons(character) {
+  const shown = shownFor(character)
+  const loot = (dungeon) => dungeonLoot(character, dungeon).filter(shown).filter(notLongShot(character, runHours(character, dungeon)))
   const queued = character.dungeonQueue?.dungeons ?? []
   const wanted = new Set(autoDungeons(character).map((d) => d.name))
-  const rows = queued.map((name) => getDungeon(name)).map((dungeon) => ({ dungeon, tag: 'Queued', drops: dungeonLoot(character, dungeon).filter(shown) }))
+  const rows = queued.map((name) => getDungeon(name)).map((dungeon) => ({ dungeon, tag: 'Queued', drops: loot(dungeon) }))
   const others = DUNGEONS.filter((d) => !queued.includes(d.name) && !dungeonLockReason(character, d))
     .map((d) => ({ dungeon: d, value: dungeonValue(character, d) }))
     .filter((d) => d.value > 0)
@@ -400,7 +417,7 @@ function focusDungeons(character) {
   for (const { dungeon } of others) {
     if (rows.length >= FOCUS_DUNGEONS) break
     const held = heldQuests(character, dungeon.name).map((id) => DUNGEON_QUESTS[id])
-    const drops = dungeonLoot(character, dungeon).filter(shown)
+    const drops = loot(dungeon)
     if (drops.length || held.some((q) => rewardGain(character, q) > 0)) {
       rows.push({ dungeon, tag: wanted.has(dungeon.name) && 'Wanted', drops })
     }
@@ -414,13 +431,14 @@ function focusDungeons(character) {
 function renderFocus(character) {
   const head = el('h3', {}, 'Farming For')
   if (!character.zone) {
-    return el('section', { class: 'sheet-panel sheet-focus', 'aria-label': 'Farming for' }, head, el('p', { class: 'empty' }, 'Nothing while idle.'))
+    return el('section', { class: 'sheet-panel sheet-focus', 'aria-label': 'Farming for' }, head, renderWanted(character), el('p', { class: 'empty' }, 'Nothing while idle.'))
   }
   const maxed = character.characterLevel >= MAX_LEVEL
   const { quests, places, dungeons } = focusRows(character)
   const trips = [...errandTrips(character)]
   return el('section', { class: 'sheet-panel sheet-focus', 'aria-label': 'Farming for' },
     head,
+    renderWanted(character),
     el('p', { class: 'note' }, maxed
       ? `At level ${MAX_LEVEL} only gear counts. A place is worth every upgrade that can drop there times its chance, counting only the best one for each slot; these are the items behind that worth.`
       : `XP first, with gear counted as the XP it helps earn (+1 power is worth ${formatNumber(Math.round(worth(character).gear))} XP now). A place is worth every upgrade that can drop there times its chance, counting only the best one for each slot; these are the items behind that worth.`),
@@ -470,17 +488,18 @@ function renderFocusZone(character, zone, drops) {
     drops.length
       ? el('ul', { class: 'focus-drops' }, drops.slice(0, FOCUS_DROPS).map((t) => renderTarget(t, 'hour')))
       : el('span', { class: 'loot-source' }, 'No upgrades drop from its mobs.'),
+    renderPlaceDrops(character, zone, 'focus'),
   )
 }
 
 // The quests' reward gear the character would wear, as rows like the drops: what each adds, and the quest
 // it's from when `named` (rows not already under that quest). Most power first.
 function renderQuestRewards(character, quests, named = false) {
-  const rows = quests.flatMap((quest) => questRewardsFor(character, quest).map((id) => ({ id, quest, power: itemGain(character, id) })))
-    .filter(shown)
+  const rows = quests.flatMap((quest) => questRewardsFor(character, quest).map((id) => ({ id, quest, power: itemPower(character, id) })))
+    .filter(shownFor(character))
     .sort((a, b) => b.power - a.power)
   return rows.length > 0 && el('ul', { class: 'focus-drops' }, rows.map(({ id, quest, power }) =>
-    renderItemRow(getItem(id), named ? `${powerText(power)} · Quest: ${quest.title}` : powerText(power))))
+    renderItemRow(id, named ? `${powerText(power)} · Quest: ${quest.title}` : powerText(power))))
 }
 
 function renderFocusDungeon(character, dungeon, tag, loot) {
@@ -492,23 +511,152 @@ function renderFocusDungeon(character, dungeon, tag, loot) {
     held.length > 0 && el('span', { class: 'loot-source' }, `Quests held: ${held.map((q) => q.title).join(', ')}`),
     renderQuestRewards(character, held, true),
     drops.length > 0 && el('ul', { class: 'focus-drops' }, drops.map((t) => renderTarget(t, 'run'))),
+    renderPlaceDrops(character, dungeon.name, 'focus'),
   )
 }
 
+// e.g. "12% per kill", "1 in 250 kills"; for a quest, the chance over the kills it still takes, e.g. "0.22% during quest"
+const odds = (p, per) => per === 'quest'
+  ? `${p >= 0.01 ? formatChance(p) : `${Number((p * 100).toPrecision(2))}%`} during quest`
+  : p >= 0.01 ? `${formatChance(p)} per ${per}` : `1 in ${formatNumber(Math.round(1 / p))} ${per}s`
+
 // An upgrade that can drop: what it adds, the chance to win one, and who drops it.
 function renderTarget(target, per) {
-  const chance = target.chance >= 0.01 ? `${formatChance(target.chance)} per ${per}` : `1 in ${formatNumber(Math.round(1 / target.chance))} ${per}s`
-  return renderItemRow(getItem(target.id), `${powerText(target.power)} · ${chance} · ${getMob(target.from)?.name ?? 'unknown'}`)
+  return renderItemRow(target.id, `${powerText(target.power)} · ${odds(target.chance, per)} · ${getMob(target.from)?.name ?? 'unknown'}`)
 }
 
-function renderItemRow(item, meta) {
+// An item as a row: icon, name, `meta` and its tooltip. Gear the character could go after is a toggle that
+// sets it as the item it wants, or stops it wanting it on the wanted one.
+function renderItemRow(key, meta) {
+  const item = getItem(key)
+  const { character, onWant } = sheet
+  const id = baseId(key)
+  const isWanted = character?.wanted === id
+  const canWant = !!onWant && (isWanted || (wantable(character, id) !== undefined && !owns(character, id)))
   const name = `${item.name}${item.suffixes ? ' of ...' : ''}`
-  return el('li', { class: `slot slot-bottom q-${QUALITIES[item.quality]}`, tabindex: 0, 'aria-label': `${name}: ${meta}` },
+  const toggle = () => onWant(isWanted ? null : id)
+  const action = !canWant ? '' : isWanted ? '. Wanted: press to stop going after it' : '. Press to have it go after this item'
+  return el('li', {
+    class: `slot slot-bottom q-${QUALITIES[item.quality]}${!canWant ? '' : isWanted ? ' wanted' : ' wantable'}`,
+    tabindex: 0,
+    role: canWant && 'button',
+    'aria-pressed': canWant && String(isWanted),
+    'aria-label': `${name}: ${meta}${action}`,
+    'data-focus-key': canWant && `want-${id}`,
+    onclick: canWant && toggle,
+    onkeydown: canWant && ((e) => {
+      if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return
+      e.preventDefault()
+      toggle()
+    }),
+  },
     renderIcon(item, item.name),
     el('span', { class: 'slot-text' },
-      el('span', { class: 'item-name' }, name),
+      el('span', { class: 'item-name' }, name, isWanted && [' ', badge('Wanted')]),
       el('span', { class: 'target-meta' }, meta)),
     renderTooltip(item),
+  )
+}
+
+const WANT_SOURCES = 3 // mobs listed for the wanted item
+
+// The item the character is set to go after and where it comes from, and a search for gear to set.
+function renderWanted(character) {
+  const id = character.wanted
+  return el('div', { class: 'want-box' },
+    el('h4', {}, 'Wanted item'),
+    id
+      ? renderWantedItem(character, id)
+      : el('p', { class: 'note' }, 'None. Click gear it doesn\'t have (in these lists, quest rewards or a place\'s drops) or find it below to have it go after that item. It counts as a big upgrade: it heads where the odds are good and keeps leveling when they\'re long. One item at a time.'),
+    renderSearch(character),
+  )
+}
+
+function renderWantedItem(character, id) {
+  const { mobs, quests, world } = itemSources(character, id)
+  const need = levelToUse(character, getItem(id))
+  const here = character.zone && grindTargets(character, character.zone).find((t) => baseId(t.id) === id)
+  const sources = [
+    ...mobs.slice(0, WANT_SOURCES).map((m) => `${m.name} (${m.places.join(', ')}): ${odds(m.n, 'kill')}`),
+    mobs.length > WANT_SOURCES && `…and ${mobs.length - WANT_SOURCES} more mobs`,
+    ...quests.map((q) => {
+      const quest = getQuest(q)
+      const place = quest.dungeon ?? quest.zone
+      return `Quest: [${quest.level}] ${quest.title}${place ? ` (${place})` : ''}`
+    }),
+    world && 'World drop: any mob around its level may drop it',
+  ].filter(Boolean)
+  const meta = [
+    need > character.characterLevel && `Wears at level ${need}`,
+    character.zone && (here ? `${odds(here.chance, 'hour')} in ${character.zone}` : `None from ${character.zone}`),
+  ].filter(Boolean).join(' · ')
+  return [
+    el('ul', { class: 'focus-drops' }, renderItemRow(id, meta || 'Wanted')),
+    el('ul', { class: 'want-sources' }, sources.map((s) => el('li', {}, s))),
+    el('p', { class: 'note' },
+      el('button', { type: 'button', class: 'button small', 'data-focus-key': 'want-clear', onclick: () => sheet.onWant?.(null) }, 'Stop wanting it'),
+      ' One item at a time.'),
+  ]
+}
+
+// The search box's text, kept over re-renders while on the same character.
+const search = { characterId: null, text: '' }
+
+function renderSearch(character) {
+  if (search.characterId !== character.id) Object.assign(search, { characterId: character.id, text: '' })
+  const results = el('ul', { class: 'focus-drops want-results focus-scroll', 'data-scroll-key': 'want-results', onmouseover: placeTooltip, onfocusin: placeTooltip })
+  const fill = () => {
+    const query = search.text.trim()
+    const ids = searchItems(character, query)
+    results.hidden = !query
+    results.replaceChildren(...(ids.length
+      ? ids.map((id) => renderItemRow(id, searchMeta(character, id)))
+      : [el('li', { class: 'note' }, query.length < SEARCH_MIN_LENGTH ? `Type at least ${SEARCH_MIN_LENGTH} letters.` : 'No gear it could go after by that name.')]))
+  }
+  const input = el('input', {
+    type: 'search', class: 'want-search', placeholder: 'Find an item to want', 'aria-label': 'Find an item to want', autocomplete: 'off',
+    'data-focus-key': 'want-search', oninput: (e) => { search.text = e.target.value; fill() },
+  })
+  input.value = search.text
+  fill()
+  return el('div', { class: 'want-finder' }, input, results)
+}
+
+function searchMeta(character, id) {
+  const { mobs, quests, world } = itemSources(character, id)
+  const source = mobs.length ? `${mobs[0].name} (${mobs[0].places[0]})` : quests.length ? `Quest: ${getQuest(quests[0]).title}` : world && 'World drop'
+  return [`Level ${levelToUse(character, getItem(id))}`, owns(character, id) && 'Has it', source].filter(Boolean).join(' · ')
+}
+
+// Every piece of gear the place's mobs drop that the character could ever wear, filled in when opened.
+// Which ones are open is kept over re-renders.
+const openDrops = new Set()
+
+function renderPlaceDrops(character, place, section) {
+  const drops = placeDrops(character, place)
+  if (!drops.length) return null
+  const key = `${character.id}|${section}|${place}`
+  const list = el('ul', { class: 'focus-drops place-drops', 'data-scroll-key': `drops-${section}-${place}`, onmouseover: placeTooltip, onfocusin: placeTooltip })
+  const fill = () => {
+    if (list.childElementCount) return
+    list.append(...drops.map(({ id, entry, n }) => {
+      const need = levelToUse(character, getItem(id))
+      return renderItemRow(id, [odds(n, 'kill'), getMob(entry)?.name ?? 'unknown', need > character.characterLevel && `level ${need}`].filter(Boolean).join(' · '))
+    }))
+  }
+  if (openDrops.has(key)) fill()
+  return el('details', {
+    class: 'place-drops-box',
+    open: openDrops.has(key),
+    ontoggle: (e) => {
+      if (e.currentTarget.open) {
+        openDrops.add(key)
+        fill()
+      } else openDrops.delete(key)
+    },
+  },
+    el('summary', { 'data-focus-key': `drops-${section}-${place}` }, `All drops (${drops.length})`),
+    list,
   )
 }
 
@@ -530,7 +678,7 @@ function renderDungeons(character, onQueue, onLeaveQueue) {
         el('button', { type: 'button', class: 'button small', 'data-focus-key': 'leave-queue', onclick: () => onLeaveQueue?.() }, 'Leave queue'))
       : el('p', { class: 'dungeon-status' }, 'Not queued.'),
     toPickUp > 0 && el('p', { class: 'note' }, `${plural(toPickUp, 'dungeon quest')} to pick up (${pending.map(([zone, ids]) => `${ids.length} ${zone ?? 'in town'}`).join(', ')}) before it queues on its own.`),
-    character.timeBank < 0 && el('p', { class: 'note' }, `Back from a dungeon run: farming again in ${formatDuration(-character.timeBank / 3600)}.`),
+    character.restingAfter && character.timeBank < 0 && el('p', { class: 'note' }, `Back from ${character.restingAfter}: farming again in ${formatDuration(-character.timeBank / 3600)}.`),
     enterable.length
       ? el('ul', { class: 'dungeon-picks' }, enterable.map((d) => {
         const held = heldQuests(character, d.name)
@@ -544,6 +692,7 @@ function renderDungeons(character, onQueue, onLeaveQueue) {
           ),
           el('span', { class: 'encounter-meta' }, [`${plural(held.length, 'quest')} held`, clears && `cleared ${clears}×`].filter(Boolean).join(' · ')),
           held.length > 0 && el('ul', { class: 'dungeon-quests' }, held.map((id) => el('li', {}, `[${getQuest(id).level}] ${getQuest(id).title}`))),
+          renderPlaceDrops(character, d.name, 'dungeons'),
         )
       }))
       : el('p', { class: 'empty' }, `No dungeons until level ${first}.`),
@@ -558,7 +707,7 @@ function renderLoot(character) {
         const item = getItem(entry.item)
         return el('li', { class: `slot slot-bottom q-${QUALITIES[item.quality]}`, tabindex: 0 },
           el('span', { class: 'item-name' }, item.name),
-          el('span', { class: 'loot-source' }, ` ${entry.quest ? `from "${entry.source}"` : entry.source === 'Drop' ? 'from a drop' : `from ${entry.source}`}${entry.equipped ? ', equipped' : ''}`),
+          el('span', { class: 'loot-source' }, ` ${entry.quest ? `from "${entry.source}"` : entry.source === 'Drop' ? 'from a drop' : `from ${entry.source}`}${entry.equipped ? ', equipped' : ''}${entry.wanted ? ', wanted' : ''}`),
           renderTooltip(item),
         )
       }))
@@ -649,22 +798,26 @@ function renderPvp(character) {
   )
 }
 
-// Bag items grouped by what they're kept for: each other spec's best gear, then gear for later levels.
+// Bag items grouped by what they're kept for: items it got for wanting them, each other spec's best gear,
+// then gear for later levels.
 function renderBag(character) {
   const offSpec = offSpecGear(character, [...Object.values(character.equipment), ...character.bag])
-  const groups = new Map()
+  const worn = new Set(Object.values(character.equipment))
+  const kept = character.kept.filter((key) => !worn.has(key))
+  const groups = new Map(kept.length ? [['Wanted', kept]] : [])
   for (const id of character.bag) {
     const label = offSpec.has(id) ? `Off-spec: ${offSpec.get(id).join(', ')}` : 'For later levels'
     groups.set(label, [...(groups.get(label) ?? []), id])
   }
-  const order = [...groups.keys()].sort((a, b) => (a === 'For later levels') - (b === 'For later levels') || a.localeCompare(b))
+  const rank = (label) => (label === 'Wanted' ? -1 : label === 'For later levels' ? 1 : 0)
+  const order = [...groups.keys()].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b))
   return el('section', { class: 'sheet-panel', 'aria-label': 'Bag' },
     el('h3', {}, 'Bag'),
     el('p', { class: 'note' }, 'The best gear for the character\'s other specs (switch specs on the ', el('a', { href: `#/character/${character.id}/talents` }, 'Talents'),
-      ' page) and gear saved for when it\'s high enough level. Everything else is sold.'),
-    character.bag.length
+      ' page), gear saved for when it\'s high enough level and items it got for wanting them. Everything else is sold.'),
+    groups.size
       ? order.map((label) => el('div', { class: 'bag-group' },
-        el('h4', { class: label === 'For later levels' ? 'bag-label' : 'bag-label off-spec' }, label),
+        el('h4', { class: label === 'Wanted' ? 'bag-label wanted-label' : label === 'For later levels' ? 'bag-label' : 'bag-label off-spec' }, label),
         el('ul', { class: 'bag' }, groups.get(label).map((id) => {
           const item = getItem(id)
           return el('li', { class: `slot slot-bottom q-${QUALITIES[item.quality]}`, tabindex: 0, 'aria-label': `${item.name} (${label})` },

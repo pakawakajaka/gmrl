@@ -154,8 +154,8 @@ export function dropQuest(character, id) {
 
 // Room for new quests: returns take(id), true if quest `id` gets a slot (and it's then used up). A free slot
 // goes to anything; in a full log a new quest takes the place of a held one outside `keep` worth no more
-// than it (rewardWorth), cheapest first. makeRoom drops them in the same order.
-export function logRoom(character, keep, w = worth(character)) {
+// than it (rewardWorth), cheapest first; only less with `ties` false. makeRoom drops them in the same order.
+export function logRoom(character, keep, w = worth(character), ties = true) {
   const held = questLogIds(character)
   let free = QUEST_LOG_SIZE - held.length
   let spare
@@ -166,7 +166,8 @@ export function logRoom(character, keep, w = worth(character)) {
       return true
     }
     spare ??= held.filter((q) => !keep(q)).map((q) => rewardWorth(character, getQuest(q), w)).sort((a, b) => a - b)
-    if (next >= spare.length || spare[next] > rewardWorth(character, getQuest(id), w)) return false
+    const value = rewardWorth(character, getQuest(id), w)
+    if (next >= spare.length || spare[next] > value || (!ties && spare[next] === value)) return false
     next += 1
     return true
   }
@@ -182,10 +183,10 @@ export function makeRoom(character, keep) {
 // Quest ids the character works on in the zone: up to WORKING_QUESTS of the quests it can do there that are
 // worth more than grinding the zone, most worth per hour first, those waiting on rare spawns last. Ones it
 // doesn't hold need room in its log (logRoom; the zone's own quests are kept). Recomputed when level,
-// gear, talents or quests change.
+// gear, talents, quests or the wanted item change.
 const activeCache = new WeakMap()
 export function activeQuests(character, zoneName) {
-  const key = `${character.characterLevel}|${character.characterSpec}|${character.characterRole}|${Object.values(character.equipment).join()}|${character.questsDone.length}|${talentKey(character)}|${questLogIds(character).join()}`
+  const key = `${character.characterLevel}|${character.characterSpec}|${character.characterRole}|${Object.values(character.equipment).join()}|${character.questsDone.length}|${talentKey(character)}|${questLogIds(character).join()}|${character.wanted}`
   let cached = activeCache.get(character)
   if (cached?.key !== key) activeCache.set(character, (cached = { key, zones: new Map() }))
   if (cached.zones.has(zoneName)) return cached.zones.get(zoneName)

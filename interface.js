@@ -68,6 +68,7 @@ function render() {
       onDelete: handleDelete,
       onQueue: (name) => handleQueue(character.id, name),
       onLeaveQueue: () => handleLeaveQueue(character.id),
+      onWant: (id) => handleWant(character.id, id),
     }))
   } else if (view === 'create') {
     app.replaceChildren(renderCharacterForm({ account, guildId: id, onSave: handleSave }))
@@ -200,6 +201,9 @@ const MOVE_REASONS = {
   quests: (t) => ` ran out of quests worth doing in ${t.from}`,
   gear: (t) => ` found ${t.from} worth less after its upgrades`,
   stuck: (t) => ` couldn't beat anything in ${t.from}`,
+  wanted: () => ' set out after the item it wants',
+  unwanted: () => ' stopped going after an item',
+  found: () => ' got the item it wanted',
 }
 function reportTravels(travels) {
   const latest = new Map()
@@ -230,16 +234,24 @@ function reportRanks(ranks) {
   }
 }
 
+// One notice per character that got the item it wanted.
+function reportWanted(wanted) {
+  for (const { character, item } of wanted) {
+    notify(el('a', { href: `#/character/${character.id}` }, character.characterName), ` got the item it wanted: [${getItem(item).name}].`)
+  }
+}
+
 function gameTick() {
   if (stopped) return
-  const { levelUps, upgrades, fights, travels, errands, runs, ranks } = account.tick()
+  const { levelUps, upgrades, fights, travels, errands, runs, ranks, wanted } = account.tick()
   reportLevelUps(levelUps)
   reportTravels(travels)
+  reportWanted(wanted)
   reportUpgrades(upgrades)
   reportFights(fights)
   reportRuns(runs)
   reportRanks(ranks)
-  if (levelUps.length || upgrades.length || fights.length || travels.length || errands.length || runs.length || ranks.length) {
+  if (levelUps.length || upgrades.length || fights.length || travels.length || errands.length || runs.length || ranks.length || wanted.length) {
     if (!app.querySelector('dialog[open]')) render() // don't close an open modal; the next render catches up
     save()
   } else if (currentView().view === 'farm') {
@@ -297,6 +309,11 @@ function handleLeaveQueue(characterId) {
   render()
 }
 
+function handleWant(characterId, id) {
+  if (account.wantItem(characterId, id)) save()
+  render()
+}
+
 function handleDelete(character) {
   account.deleteCharacter(character.id)
   save()
@@ -330,6 +347,7 @@ function welcomeBack() {
     reportTravels(away.travels)
     reportLevelUps(away.levelUps)
     reportRanks(away.ranks)
+    reportWanted(away.wanted)
     const battles = away.fights.filter((f) => f.kind !== 'evade')
     const kills = battles.reduce((sum, f) => sum + f.honor, 0)
     const honor = battles.reduce((sum, f) => sum + f.points, 0)

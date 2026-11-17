@@ -1,15 +1,26 @@
 // What a farming character's time is worth, so it can choose between quests, grinding, zones and dungeons.
 // Below max level everything is valued in XP. Gear counts for the extra XP it would help earn while it's
 // worn: its share of the character's power, over GEAR_KEEP_LEVELS levels' worth of XP. At max level XP
-// stops, and everything is valued in the power that gear adds.
+// stops, and everything is valued in the power that gear adds. The item a player set the character to go
+// after (Character.wanted) counts as WANTED_LEVELS levels' worth of XP more, worn now or not.
 import { MAX_LEVEL, xpToNextLevel } from './data.js'
 import { ITEMS, LOOT, LOOT_REFS, MOBS, SUFFIX_POOLS } from './gear-data.js'
-import { SLOTS, canDualWield, canUseNow, fitsSlot, getItem, isTwoHand, itemScore, levelToUse, profileOf, questRewardsFor } from './gear.js'
+import { SLOTS, baseId, canDualWield, canUseNow, fitsSlot, getItem, isTwoHand, itemScore, levelToUse, profileOf, questRewardsFor } from './gear.js'
 import { NORMAL_RESPAWN, OVERHEAD_SECONDS, combatOf, grindPool } from './combat.js'
 import { scorePower } from './power.js'
 
 // Levels a piece of leveling gear is worn before something better replaces it.
 export const GEAR_KEEP_LEVELS = 5
+
+// The wanted item's extra worth in levels of XP, so a likely drop pulls a character to it and a long shot
+// doesn't. It's counted as WANTED_LEVELS / GEAR_KEEP_LEVELS of the character's solo power, which at max
+// level (where only gear counts) puts it ahead of almost any other upgrade.
+export const WANTED_LEVELS = 3
+
+// Item score the wanted item `id` is worth on top of what wearing it adds, or 0 if it isn't wanted.
+function wantedScore(character, id) {
+  return id === character.wanted ? ((WANTED_LEVELS / GEAR_KEEP_LEVELS) * combatOf(character).power.solo) / scorePower(character, 1) : 0
+}
 
 // { xp, gear }: what a point of XP and a point of solo power are worth to the character.
 export function worth(character) {
@@ -113,13 +124,18 @@ function placeOfId(id) {
 }
 const wornIn = (character, place) => placeSlots.get(place).map((slot) => character.equipment[slot] ?? '').join()
 
-// Expected item score gain from one drop of item `id` (one the character can wear now), averaged over its
-// random suffixes.
+// Expected item score gain from one drop of item `id` (one the character can wear now, or its wanted item),
+// averaged over its random suffixes, with the wanted item's extra worth (see wantedScore).
 const suffixKeys = new Map() // item id -> [[key, chance]]
 function dropScore(character, places, id) {
+  if (id !== character.wanted) return wearScore(character, places, id)
+  return (canUseNow(character, ITEMS[id]) ? wearScore(character, places, id) : 0) + wantedScore(character, id)
+}
+
+function wearScore(character, places, id) {
   const place = placeOfId(id)
   let cached = places.get(place)
-  if (!cached) places.set(place, (cached = { worn: wornIn(character, place), items: new Map() }))
+  if (!cached) places.set(place, (cached = { worn: wornIn(character, place), items: new Map(), best: new Map() }))
   let gain = cached.items.get(id)
   if (gain !== undefined) return gain
   const scores = scoresOf(character)
@@ -137,6 +153,28 @@ function dropScore(character, places, id) {
   } else gain = gainIn(scores, character, id, ITEMS[id])
   cached.items.set(id, gain)
   return gain
+}
+
+// The random suffix of item `id` (one the character can wear now) that would add the most: { key, gain,
+// odds: its share of the item's rolls }; undefined if the item has no suffixes.
+function bestSuffix(character, places, id) {
+  const pool = ITEMS[id].suffixes && SUFFIX_POOLS[ITEMS[id].suffixes]
+  if (!pool) return undefined
+  wearScore(character, places, id)
+  const { best } = places.get(placeOfId(id))
+  if (best.has(id)) return best.get(id)
+  const scores = scoresOf(character)
+  let total = 0
+  let pick
+  for (const [suffix, chance] of pool) {
+    total += chance
+    const key = `${id}:${suffix}`
+    const gain = gainIn(scores, character, key, getItem(key))
+    if (!pick || gain > pick.gain) pick = { key, gain, odds: chance }
+  }
+  pick.odds /= total
+  best.set(id, pick)
+  return pick
 }
 
 // The gear in a loot list (see rollMobLoot in gear.js) the character's class and race could ever wear:
@@ -188,22 +226,26 @@ function mobDrops(character, table, entry) {
   return drops
 }
 
-// The drops (from mobDrops or runGear) the character can wear at its level: [[item id, expected count]].
-const usableLists = new WeakMap() // drops -> Map(level -> list)
+// The drops (from mobDrops or runGear) the character can wear at its level, and its wanted item: [[item id,
+// expected count]].
+const usableLists = new WeakMap() // drops -> Map(level|wanted -> list)
 function usable(character, table, drops) {
   let byLevel = usableLists.get(drops)
   if (!byLevel) usableLists.set(drops, (byLevel = new Map()))
   const level = character.characterLevel
-  let list = byLevel.get(level)
-  if (!list) byLevel.set(level, (list = [...drops].filter(([id]) => table.levels.get(id) <= level)))
+  const wanted = character.wanted ?? null
+  const key = `${level}|${wanted}`
+  let list = byLevel.get(key)
+  if (!list) byLevel.set(key, (list = [...drops].filter(([id]) => table.levels.get(id) <= level || id === wanted)))
   return list
 }
 
-// Per-mob loot gains and per-zone grind values, kept as long as the character's fight numbers (see combatOf).
+// Per-mob loot gains and per-zone grind values, kept as long as the character's fight numbers (see combatOf)
+// and wanted item.
 const valueCaches = new WeakMap()
 function valuesOf(character) {
   const ctx = combatOf(character)
-  const key = `${character.characterSpec}|${character.characterRole}`
+  const key = `${character.characterSpec}|${character.characterRole}|${character.wanted ?? ''}`
   let values = valueCaches.get(ctx)
   if (values?.key !== key) valueCaches.set(ctx, (values = { key, mobs: new Map(), refs: new Map(), zones: new Map(), plans: new Map() }))
   return values
@@ -294,15 +336,18 @@ function bestUpgrades(character, gains, drops, share = 1) {
 // The upgrades behind the gear worth of `kills` ([[mob entry, count]]) when the character gets `share` of
 // what drops, most worth first: [{ id, from, chance, power, worth }]. `from` is the mob that drops the most
 // of it, `chance` that at least one is won, `power` what wearing it would add, and `worth` its part of the
-// expected power: power × chance × the chance nothing better for its place was won (see bestUpgrades).
-// Shared lists (world drops) count too.
+// expected power: average gain × chance × the chance nothing better for its place was won (see
+// bestUpgrades). Shared lists (world drops) count too. An item with random suffixes is shown as the one
+// suffix that would add the most (`id` its key, `chance` of winning that suffix); others still get worn
+// when they drop. The wanted item stays any suffix (its base id and the chance of any), with the best
+// suffix's power.
 export function lootTargets(character, kills, share = 1) {
   const table = dropsOf(character)
   const gains = gainsOf(character)
   const level = character.characterLevel
   const drops = new Map() // item id -> { n, from, most }
   const add = (id, n, entry) => {
-    if (!(table.levels.get(id) <= level)) return
+    if (!(table.levels.get(id) <= level) && id !== character.wanted) return
     const drop = drops.get(id)
     if (!drop) drops.set(id, { n, from: entry, most: n })
     else {
@@ -320,16 +365,21 @@ export function lootTargets(character, kills, share = 1) {
     const gain = dropScore(character, gains, id)
     if (gain <= 0) continue
     const place = placeOfId(id)
-    const option = { id, from, gain, chance: share * (1 - Math.exp(-n)) }
+    const option = { id, from, gain, n, chance: share * (1 - Math.exp(-n)) }
     if (places.has(place)) places.get(place).push(option)
     else places.set(place, [option])
   }
   const targets = []
   for (const options of places.values()) {
     let none = 1
-    for (const { id, from, gain, chance } of options.sort((a, b) => b.gain - a.gain)) {
-      targets.push({ id, from, chance, power: scorePower(character, gain), worth: scorePower(character, gain * chance * none) })
+    for (const { id, from, gain, n, chance } of options.sort((a, b) => b.gain - a.gain)) {
+      const worth = scorePower(character, gain * chance * none)
       none *= 1 - chance
+      const wear = gain - wantedScore(character, id)
+      const best = wear > 0 && bestSuffix(character, gains, id)
+      if (!best) targets.push({ id, from, chance, power: scorePower(character, wear), worth })
+      else if (id === character.wanted) targets.push({ id, from, chance, power: scorePower(character, best.gain), worth })
+      else targets.push({ id: best.key, from, chance: share * (1 - Math.exp(-n * best.odds)), power: scorePower(character, best.gain), worth })
     }
   }
   return targets.sort((a, b) => b.worth - a.worth)
@@ -403,10 +453,13 @@ export function huntedMobs(character, zoneName) {
   return plan.targeted ? [...new Set(plan.weighted.map((m) => m.fight.mob.name))] : []
 }
 
-// Solo power that wearing the item now would add.
+// Solo power that wearing the item now would add, with the wanted item's extra worth (see WANTED_LEVELS).
 export function itemGain(character, key) {
-  return scorePower(character, scoreGain(character, key))
+  return scorePower(character, scoreGain(character, key) + wantedScore(character, baseId(key)))
 }
+
+// Solo power that wearing the item now would add.
+export const itemPower = (character, key) => scorePower(character, scoreGain(character, key))
 
 // Solo power the quest's reward gear would add.
 export const rewardGain = (character, quest) => questRewardsFor(character, quest).reduce((sum, id) => sum + itemGain(character, id), 0)

@@ -1,7 +1,7 @@
 import { CLASSES, MAX_LEVEL, MIN_LEVEL, NAME_PATTERN, RACES, ROLES, classIcon, xpToNextLevel } from './data.js'
 import { getZone } from './zones.js'
 import { averageItemLevel, characterPower } from './power.js'
-import { SLOTS, bestLoadout, getItem, getQuest, itemKey, levelToUse, offSpecGear, questRewardsFor, rollMobLoot, specOptions } from './gear.js'
+import { SLOTS, baseId, bestLoadout, getItem, getQuest, itemKey, levelToUse, offSpecGear, questRewardsFor, rollMobLoot, specOptions } from './gear.js'
 import { farmRates, questXp } from './combat.js'
 import { activeQuests, creditKill, nextAction, objectivesOf, pickUpQuests, tidyQuestLog, workable } from './quests.js'
 import { isClassSpell, startingSpells, trainSpells } from './spells.js'
@@ -11,17 +11,21 @@ import { grindPlan, huntedMobs } from './value.js'
 import { canHold, getDungeon, dungeonLockReason, nextErrand, runErrand } from './dungeons.js'
 import { MAX_RANK, maxRpAtLevel, rankOf, rankTitle } from './honor.js'
 import { RESET_DAYS } from './reset.js'
+import { owns, wantable } from './wanted.js'
 
 const lookup = (table, key) => (Object.hasOwn(table, key) ? table[key] : undefined)
 const BAG_SIZE = 16
 const LOG_SIZE = 20
 const MIN_TIME_BANK = -12 * 3600 // owed after a long dungeon run
 const HUNTED_NAMES = 3 // mob names in farmStatus
+const KEPT_SIZE = 8
 
 export default class Character {
   #planned = null // the next action in the current zone, kept until there's time to do it
+  #rethink = null // a nextZone reason to look for a better zone at the next chance, after the wanted item changed
+  #gotWanted = null // the wanted item's key once got, until it's in the loot log
 
-  constructor({ id = crypto.randomUUID(), characterName, characterClass, characterSpec, characterRace, characterRole, characterLevel = MIN_LEVEL, characterXp = 0, zone = null, copper = 0, spells, talents, equipment = {}, bag = [], questsDone = [], questLog = {}, timeBank = 0, lootLog = [], honorableKills = 0, honor = 0, honorToday = null, honorPeriod = null, rankPoints = 0, highestRank = 0, honorLastPeriod = null, pvpKills = 0, pvpDeaths = 0, pvpLog = [], pvpReadyAt = 0, hearthReadyAt = 0, dungeonQuests = [], dungeonQueue = null, dungeonClears = {}, queueDeclined = null }) {
+  constructor({ id = crypto.randomUUID(), characterName, characterClass, characterSpec, characterRace, characterRole, characterLevel = MIN_LEVEL, characterXp = 0, zone = null, copper = 0, spells, talents, equipment = {}, bag = [], questsDone = [], questLog = {}, timeBank = 0, lootLog = [], honorableKills = 0, honor = 0, honorToday = null, honorPeriod = null, rankPoints = 0, highestRank = 0, honorLastPeriod = null, pvpKills = 0, pvpDeaths = 0, pvpLog = [], pvpReadyAt = 0, hearthReadyAt = 0, dungeonQuests = [], dungeonQueue = null, dungeonClears = {}, queueDeclined = null, restingAfter = null, wanted = null, kept = [] }) {
     this.id = id
     this.characterName = Character.formatName(characterName)
     this.characterClass = characterClass
@@ -57,6 +61,9 @@ export default class Character {
     this.dungeonQueue = dungeonQueue // { dungeon, since (ms), manual } while waiting for a group, else null
     this.dungeonClears = dungeonClears // { dungeon name: successful runs }
     this.queueDeclined = queueDeclined // { level, quests } when last taken out of the queue by hand
+    this.restingAfter = restingAfter // name of the dungeon whose run it's still paying back time for (negative timeBank), or null
+    this.wanted = wanted // base item id a player set the character to go after (one at a time), or null; see wanted.js
+    this.kept = kept // item ids got by wanting them, newest first: never vendored, at most KEPT_SIZE
   }
 
   get xpToNextLevel() {
@@ -78,10 +85,16 @@ export default class Character {
     return zone ? farmRates(this, zone, grindPlan(this, zone.name)) : undefined
   }
 
-  // E.g. "Farming in Winterspring: Frostsaber Stalker, Winterfall Ursa", naming the mobs it grinds when it
+  // What it's doing: "Resting after Wailing Caverns" while paying back a dungeon run's time, "Picking up
+  // dungeon quests in Orgrimmar" on a pickup trip, "Questing in The Barrens: Raptor Thieves" on a quest, else
+  // e.g. "Farming in Winterspring: Frostsaber Stalker, Winterfall Ursa", naming the mobs it grinds when it
   // hunts only some (see grindPlan).
   get farmStatus() {
     if (!this.zone) return 'Idle'
+    if (this.restingAfter && this.timeBank < 0) return `Resting after ${this.restingAfter}`
+    const action = getZone(this.zone) ? this.plannedAction : undefined
+    if (action?.errand) return `Picking up dungeon quests ${action.errand.zone === null ? 'in town' : `in ${action.errand.zone}`}`
+    if (action?.questId) return `Questing in ${this.zone}: ${getQuest(action.questId).title}`
     const hunted = getZone(this.zone) ? huntedMobs(this, this.zone) : []
     const names = hunted.length > HUNTED_NAMES ? [...hunted.slice(0, HUNTED_NAMES - 1), `${hunted.length - HUNTED_NAMES + 1} more`] : hunted
     return `Farming in ${this.zone}${names.length ? `: ${names.join(', ')}` : ''}`
@@ -125,6 +138,7 @@ export default class Character {
   farm(hours, now = Date.now()) {
     if (!getZone(this.zone) || hours <= 0) {
       if (hours > 0) this.timeBank = Math.min(0, this.timeBank + hours * 3600) // time owed for a dungeon run
+      if (this.timeBank >= 0) this.restingAfter = null
       return { copper: 0, levels: 0, upgrades: [], travels: [], errands: [] }
     }
 
@@ -135,12 +149,18 @@ export default class Character {
     const travels = []
     const errands = []
     this.timeBank += hours * 3600
+    if (this.timeBank >= 0) this.restingAfter = null
     const travel = (move) => {
       travels.push({ from: this.zone, to: move.zone, reason: move.reason, level: this.characterLevel })
       this.zone = move.zone
       this.timeBank -= move.seconds
     }
     for (;;) {
+      if (this.#rethink) {
+        const move = nextZone(this, this.#rethink)
+        this.#rethink = null
+        if (move) travel(move)
+      }
       pickUpQuests(this, this.zone)
       const action = this.plannedAction
       if (!action) {
@@ -237,6 +257,18 @@ export default class Character {
     return { xp: total, questCopper, levels, upgrades, travel }
   }
 
+  // Sets the item a player wants the character to go after (any key of it; see wanted.js), or clears it with
+  // null. It counts as a big upgrade wherever the character weighs loot, and the character looks for a
+  // better zone at its next chance. Returns false if it can't be wanted or the character already has it.
+  setWanted(key) {
+    const id = key === null ? null : wantable(this, key)
+    if (id === undefined || id === this.wanted || (id !== null && owns(this, id))) return false
+    this.wanted = id
+    this.#planned = null
+    this.#rethink = id === null ? 'unwanted' : 'wanted'
+    return true
+  }
+
   // Talent changes from the talent selector. Each returns false if not allowed.
   learnTalent(key) {
     this.#planned = null
@@ -285,17 +317,28 @@ export default class Character {
     return levels
   }
 
-  // Puts on the best gear from what's worn, the bag and `newItems`. Keeps the best gear for the character's
-  // other specs and items that need a higher level in the bag; the rest is vendored. Returns the item ids
-  // that were newly put on.
+  // Puts on the best gear from what's worn, the bag, `kept` and `newItems`. Keeps the best gear for the
+  // character's other specs and items that need a higher level in the bag; the rest is vendored, except
+  // `kept`. Getting the wanted item puts it in `kept` and stops wanting it. Returns the item ids that were
+  // newly put on.
   equipBest(newItems = []) {
     const before = new Set(Object.values(this.equipment))
-    const owned = [...Object.values(this.equipment), ...this.bag, ...newItems]
+    const held = [...Object.values(this.equipment), ...this.bag]
+    const owned = [...held, ...newItems, ...this.kept.filter((key) => !held.includes(key) && !newItems.includes(key))]
+    const got = this.wanted && newItems.find((key) => baseId(key) === this.wanted)
+    if (got) {
+      this.kept = [got, ...this.kept.filter((key) => key !== got)].slice(0, KEPT_SIZE)
+      this.wanted = null
+      this.#gotWanted = got
+      this.#planned = null
+      this.#rethink = 'found'
+    }
     const { equipment, leftovers } = bestLoadout(this, owned)
     this.equipment = Object.fromEntries(Object.keys(SLOTS).filter((s) => equipment[s]).map((s) => [s, equipment[s]]))
     const worn = new Set(Object.values(this.equipment))
-    const offSpec = [...offSpecGear(this, owned).keys()].filter((id) => !worn.has(id))
-    const waiting = (id) => !worn.has(id) && levelToUse(this, getItem(id)) > this.characterLevel && levelToUse(this, getItem(id)) < Infinity
+    const kept = new Set(this.kept)
+    const offSpec = [...offSpecGear(this, owned).keys()].filter((id) => !worn.has(id) && !kept.has(id))
+    const waiting = (id) => !worn.has(id) && !kept.has(id) && levelToUse(this, getItem(id)) > this.characterLevel && levelToUse(this, getItem(id)) < Infinity
     const later = [...new Set(leftovers.filter(waiting))]
       .sort((a, b) => getItem(b).itemLevel - getItem(a).itemLevel)
       .slice(0, BAG_SIZE)
@@ -304,8 +347,10 @@ export default class Character {
   }
 
   #log(acquired, upgrades, now) {
-    const notable = acquired.filter(({ item, quest }) => quest || getItem(item).quality >= 2 || upgrades.includes(item))
-    const entries = notable.map(({ item, source, quest }) => ({ item, source, at: now, equipped: upgrades.includes(item), ...(quest && { quest }) }))
+    const got = this.#gotWanted
+    this.#gotWanted = null
+    const notable = acquired.filter(({ item, quest }) => quest || item === got || getItem(item).quality >= 2 || upgrades.includes(item))
+    const entries = notable.map(({ item, source, quest }) => ({ item, source, at: now, equipped: upgrades.includes(item), ...(quest && { quest }), ...(item === got && { wanted: true }) }))
     this.lootLog = [...entries.reverse(), ...this.lootLog].slice(0, LOG_SIZE)
   }
 
@@ -334,7 +379,7 @@ export default class Character {
     this.lootLog = (Array.isArray(data.lootLog) ? data.lootLog : [])
       .filter((e) => e && itemKey(e.item) !== undefined && typeof e.source === 'string' && Number.isFinite(Number(e.at)))
       .slice(0, LOG_SIZE)
-      .map((e) => ({ item: itemKey(e.item), source: e.source.slice(0, 100), at: Number(e.at), equipped: e.equipped === true, ...(e.quest === true && { quest: true }) }))
+      .map((e) => ({ item: itemKey(e.item), source: e.source.slice(0, 100), at: Number(e.at), equipped: e.equipped === true, ...(e.quest === true && { quest: true }), ...(e.wanted === true && { wanted: true }) }))
     const count = (value) => Math.floor(fraction(value, Number.MAX_SAFE_INTEGER))
     this.honorableKills = count(data.honorableKills)
     this.honor = fraction(data.honor, Number.MAX_SAFE_INTEGER)
@@ -397,9 +442,14 @@ export default class Character {
     this.queueDeclined = declined && typeof declined === 'object' && Number.isInteger(declined.level) && Number.isInteger(declined.quests)
       ? { level: declined.level, quests: declined.quests }
       : null
+    this.restingAfter = this.timeBank < 0 && getDungeon(data.restingAfter) ? data.restingAfter : null
     this.equipment = {}
     this.bag = []
+    this.wanted = null
+    this.kept = [...new Set(ids(data.kept))].slice(0, KEPT_SIZE)
     this.equipBest([...ids(equipped), ...ids(data.bag)])
+    const wanted = data.wanted == null ? undefined : wantable(this, itemKey(data.wanted))
+    if (wanted !== undefined && !owns(this, wanted)) this.wanted = wanted
     tidyQuestLog(this)
   }
 

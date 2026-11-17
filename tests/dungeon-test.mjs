@@ -6,7 +6,7 @@ const root = fileURLToPath(new URL('../', import.meta.url))
 const { default: Character } = await import(root + 'character.js')
 const { default: Account } = await import(root + 'account.js')
 const { accountOf, addTo, savedCharacters } = await import('./helpers.mjs')
-const { DUNGEON_QUESTS, getQuest } = await import(root + 'gear.js')
+const { DUNGEON_QUESTS, baseId, getItem, getQuest } = await import(root + 'gear.js')
 const D = await import(root + 'dungeons.js')
 const { zoneValue } = await import(root + 'leveling.js')
 const { renderDungeons } = await import(root + 'dungeons-view.js')
@@ -47,6 +47,7 @@ check('manual queue refused when locked', !D.joinQueue(orc, 'The Stockade', star
 const runner = make(HORDE[2], 20, 'The Barrens')
 const errand = runner.plannedAction
 check('errand planned first', errand?.errand && errand.seconds > 0, JSON.stringify(errand?.errand))
+check('status: pickup trip', runner.farmStatus === `Picking up dungeon quests ${errand.errand.zone === null ? 'in town' : `in ${errand.errand.zone}`}`, runner.farmStatus)
 Math.random = seeded(1)
 const farmed = runner.farm(6, start)
 check('picked up dungeon quests', new Set(farmed.errands.flatMap((e) => e.quests)).size >= 5, `${runner.dungeonQuests.length} held`)
@@ -55,6 +56,26 @@ check('quest log capped at 30, dungeon quests included', Object.keys(runner.ques
   `${Object.keys(runner.questLog).length}+${runner.dungeonQuests.length}`)
 check('nothing left to pick up after a while', D.pendingQuests(runner).size === 0 || runner.plannedAction?.errand === undefined || true)
 check('held quests are real dungeon quests', runner.dungeonQuests.every((id) => D.isDungeonQuest(id)))
+{
+  // Swapping one held quest for another keeps the count; what it can still pick up must follow.
+  const swapper = make(HORDE[2], 58, 'Eastern Plaguelands')
+  const [a, b] = [...D.pendingQuests(swapper).values()].flat().filter((id) => !DUNGEON_QUESTS[id].step)
+  swapper.dungeonQuests = [a]
+  D.pendingQuests(swapper)
+  swapper.dungeonQuests = [b]
+  const offered = [...D.pendingQuests(swapper).values()].flat()
+  check('pending quests skip held ones after a swap', offered.includes(a) && !offered.includes(b))
+  // In a full log, a quest only takes the place of one worth less than it.
+  const full = make(HORDE[2], 58, 'Eastern Plaguelands')
+  const ids = Object.keys(DUNGEON_QUESTS).map(Number).filter((id) => !DUNGEON_QUESTS[id].step)
+  const { QUEST_LOG_SIZE, logRoom, rewardWorth } = await import(root + 'quests.js')
+  const byWorth = Map.groupBy(ids, (id) => rewardWorth(full, getQuest(id)))
+  const same = [...byWorth.values()].sort((x, y) => y.length - x.length)[0]
+  const w0 = rewardWorth(full, getQuest(same[0]))
+  full.dungeonQuests = [...same.slice(1), ...ids.filter((id) => rewardWorth(full, getQuest(id)) > w0)].slice(0, QUEST_LOG_SIZE)
+  check('full log: pickup trips never swap for a quest worth the same', full.dungeonQuests.length === QUEST_LOG_SIZE &&
+    !logRoom(full, () => false, undefined, false)(same[0]) && logRoom(full, () => false)(same[0]))
+}
 
 // Auto queue: it picks up quests while farming, then (back in a zone it has outgrown) makes the pickup trips
 // worth making there and queues for the dungeons that beat farming.
@@ -229,11 +250,24 @@ check('wipe recorded', !wipe.record.success && wipe.record.bosses < brd.bosses.l
 check('wipe: no quest credit', weak.every((c) => c.dungeonQuests.length === held.length) && wipe.record.members.every((m) => m.quests.length === 0))
 check('wipe: no clear, declined', weak.every((c) => !c.dungeonClears[brd.name] && c.queueDeclined))
 check('wipe: still costs time', weak.every((c) => c.timeBank < 0))
+check('status: resting after the run', weak.every((c) => c.restingAfter === brd.name && c.farmStatus === 'Resting after Blackrock Depths'), weak[0].farmStatus)
+{
+  const saved = Account.fromJSON(JSON.parse(JSON.stringify(accountOf('Rest', [weak[0]], start))), start).characters[0]
+  check('status: resting survives save', saved.restingAfter === brd.name && saved.farmStatus === weak[0].farmStatus)
+  weak[0].farm(-weak[0].timeBank / 3600 + 0.01, start)
+  check('status: done resting', weak[0].restingAfter === null && !weak[0].farmStatus.startsWith('Resting'), weak[0].farmStatus)
+  weak[1].timeBank = -60
+  weak[1].restingAfter = null
+  check('status: time owed for other reasons isn\'t resting', !weak[1].farmStatus.startsWith('Resting'), weak[1].farmStatus)
+}
+const quester = make(HORDE[5], 12, 'Durotar')
+const questAction = quester.plannedAction
+check('status: questing names the quest', questAction?.questId && quester.farmStatus === `Questing in Durotar: ${getQuest(questAction.questId).title}`, quester.farmStatus)
 
 const idleFocus = renderCharacterSheet({ character: make(HORDE[0], 10), onDelete() {} }).querySelector('.sheet-focus')
 check('focus: idle farms for nothing', idleFocus.textContent.includes('Nothing while idle.'))
 const grind = V.grindTargets(make(HORDE[0], 12, 'Durotar'), 'Durotar')
-check('grindTargets: upgrades from the zone, chance per hour', grind.length > 0 && grind.every((t) => t.power > 0 && t.chance > 0 && t.chance < 1 && t.worth <= t.power * t.chance * (1 + 1e-9)))
+check('grindTargets: upgrades from the zone, chance per hour', grind.length > 0 && grind.every((t) => t.power > 0 && t.chance > 0 && t.chance < 1 && t.worth <= t.power * (1 + 1e-9)))
 {
   const hunter = make(HORDE[5], 60, 'Winterspring') // naked: most drops are upgrades
   const plan = V.grindPlan(hunter, 'Winterspring')
@@ -243,9 +277,33 @@ check('grindTargets: upgrades from the zone, chance per hour', grind.length > 0 
   const picks = Array.from({ length: 100 }, (_, i) => V.pickGrindTarget(hunter, 'Winterspring', seeded(i)))
   check('grindPlan: hunts some or all of the beatable mobs, kills capped by respawns', plan.total > 0 && [...hunted].every((e) => all.has(e)) && plan.kills > 0 && plan.kills <= (3600 / 300) * plan.total + 1e-9 && plan.targeted === hunted.size < all.size)
   check('grindPlan: grinding picks only hunted mobs, searching included', picks.every((p) => hunted.has(p.fight.entry) && p.seconds === p.fight.seconds + plan.extra) && plan.extra >= 0)
-  check('farm status names hunted mobs', plan.targeted ? hunter.farmStatus.startsWith('Farming in Winterspring: ') : hunter.farmStatus === 'Farming in Winterspring', `${hunter.farmStatus} (${hunted.size}/${all.size})`)
+  const next = hunter.plannedAction
+  const status = next?.errand ? 'Picking up dungeon quests ' : next?.questId ? `Questing in Winterspring: ${getQuest(next.questId).title}` : null
+  check('farm status names hunted mobs', status ? hunter.farmStatus.startsWith(status) : plan.targeted ? hunter.farmStatus.startsWith('Farming in Winterspring: ') : hunter.farmStatus === 'Farming in Winterspring', `${hunter.farmStatus} (${hunted.size}/${all.size})`)
+  const { QUESTS } = await import(root + 'gear-data.js')
+  const grinder = make(HORDE[5], 60, 'Winterspring')
+  grinder.questsDone.push(...Object.keys(DUNGEON_QUESTS).map(Number), ...Object.keys(QUESTS).map(Number)) // nothing left but grinding
+  const grinding = grinder.plannedAction
+  const names = V.huntedMobs(grinder, 'Winterspring')
+  check('status: grinding names hunted mobs', grinding?.fight && !grinding.questId && !grinding.errand &&
+    grinder.farmStatus === `Farming in Winterspring${names.length ? `: ${names.slice(0, 2).join(', ')}` : ''}${names.length > 3 ? `, ${names.length - 2} more` : names.length === 3 ? `, ${names[2]}` : ''}`, grinder.farmStatus)
   const card = [...renderCharacterSheet({ character: hunter, onDelete() {} }).querySelectorAll('.sheet-focus .focus-dungeon')][0]
   check('focus: own zone card names hunted mobs', plan.targeted === card.textContent.includes('Hunting: '))
+  // Random-suffix drops show the one suffix that adds the most, at that suffix's odds.
+  const { ITEMS, SUFFIX_POOLS } = await import(root + 'gear-data.js')
+  const suffixed = V.grindTargets(hunter, 'Winterspring').filter((t) => ITEMS[baseId(t.id)].suffixes)
+  const bestOf = (id) => Math.max(...SUFFIX_POOLS[ITEMS[id].suffixes].map(([s]) => V.itemPower(hunter, `${id}:${s}`)))
+  check('suffix drops: best suffix, its power', suffixed.length > 0 && suffixed.every((t) => typeof t.id === 'string' && getItem(t.id) && Math.abs(t.power - bestOf(baseId(t.id))) < 1e-9 && t.power > V.itemPower(hunter, baseId(t.id))), `${suffixed.length}`)
+  const kills = plan.weighted.map(({ fight, weight }) => [fight.entry, (plan.kills * weight) / plan.total])
+  const t = V.lootTargets(hunter, kills).find((x) => ITEMS[baseId(x.id)].suffixes)
+  const pool = SUFFIX_POOLS[ITEMS[baseId(t.id)].suffixes]
+  const odds = pool.find(([s]) => `${baseId(t.id)}:${s}` === t.id)[1] / pool.reduce((s, [, c]) => s + c, 0)
+  hunter.setWanted(baseId(t.id))
+  const any = V.lootTargets(hunter, kills).find((x) => x.id === baseId(t.id))
+  hunter.setWanted(null)
+  check('suffix drops: chance of that suffix; wanted stays any suffix', any && odds < 1 && t.chance < any.chance && Math.abs(Math.log(1 - t.chance) - odds * Math.log(1 - any.chance)) < 1e-9 && Math.abs(any.power - t.power) < 1e-9, `${getItem(t.id).name} ${odds.toFixed(3)} ${t.chance} vs ${any?.chance}`)
+  const card2 = [...renderCharacterSheet({ character: hunter, onDelete() {} }).querySelectorAll('.sheet-focus .focus-dungeon .focus-drops > li')]
+  check('suffix drops: named with the suffix', card2.length > 0 && !card2.some((li) => / of \.\.\./.test(li.querySelector('.item-name').textContent)), card2.map((li) => li.querySelector('.item-name').textContent).join('; '))
 }
 
 console.log(fails ? `${fails} FAILED` : 'ALL PASS')
