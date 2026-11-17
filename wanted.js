@@ -25,7 +25,7 @@ function sourceIndex() {
     if (!placeMobs.get(place).includes(entry)) placeMobs.get(place).push(entry)
   }
   for (const [zone, mobs] of Object.entries(ZONE_MOBS)) for (const [entry] of mobs) add(entry, zone)
-  for (const d of DUNGEONS) for (const entry of [...d.bosses, ...d.trash.map(([e]) => e)]) add(entry, d.name)
+  for (const d of DUNGEONS) for (const entry of [...d.bosses.flat(), ...d.trash.map(([e]) => e)]) add(entry, d.name)
 
   const lootOf = (entry) => {
     const id = MOBS[entry]?.loot

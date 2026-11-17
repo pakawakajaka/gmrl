@@ -533,7 +533,12 @@ for (const quest of Object.values(quests)) if (quest.prev && !quests[quest.prev]
 // ---- Dungeons ----
 // 5-player dungeons (no raids, and Lower Blackrock Spire without the upper half): [name, map id, quest area ids,
 // level range, faction that can enter (by its capital), minutes for a clear at the right level, bosses in kill
-// order]. Trash is every other hostile creature spawned in the map.
+// order]. A boss given as a list is a slot where one of them, picked at random, is fought each run (the Ring of
+// Law's arena bosses are summoned by a script, so they have no spawn points). Trash is every other hostile
+// creature spawned in the map.
+// Left out of Blackrock Depths on purpose: Panzor the Invincible (8923), a rare in a spawn pool on a 7-day
+// respawn, and Theldren (16059), who has no spawn and is only summoned in the Ring of Law with the Banner of
+// Provocation from "The Challenge" (Dungeon Set 2 chain), which the game can't give.
 const DUNGEON_LIST = [
   ['Ragefire Chasm', 389, [2437], 13, 18, 'Horde', 30, ['Oggleflint', 'Taragaman the Hungerer', 'Jergosh the Invoker', 'Bazzalan']],
   ['Wailing Caverns', 43, [718], 17, 24, null, 60, ['Lady Anacondra', 'Lord Cobrahn', 'Kresh', 'Lord Pythas', 'Skum', 'Lord Serpentis', 'Verdan the Everliving', 'Mutanus the Devourer', 'Deviate Faerie Dragon']],
@@ -549,7 +554,7 @@ const DUNGEON_LIST = [
   ["Zul'Farrak", 209, [1176, 978], 44, 54, null, 75, ["Antu'sul", 'Theka the Martyr', "Witch Doctor Zum'rah", 'Nekrum Gutchewer', "Shadowpriest Sezz'ziz", 'Sergeant Bly', 'Hydromancer Velratha', "Gahz'rilla", 'Chief Ukorz Sandscalp', 'Ruuzlu', 'Zerillis', 'Sandarr Dunereaver']],
   ['Maraudon', 349, [2100], 46, 55, null, 100, ['Noxxion', 'Razorlash', 'Lord Vyletongue', 'Meshlok the Harvester', 'Celebras the Cursed', 'Landslide', 'Tinkerer Gizlock', 'Rotgrip', 'Princess Theradras']],
   ['Sunken Temple', 109, [1477, 1417], 50, 56, null, 90, ["Atal'alarion", 'Dreamscythe', 'Weaver', "Jammal'an the Prophet", 'Ogom the Wretched', 'Morphaz', 'Hazzas', 'Shade of Eranikus', 'Avatar of Hakkar']],
-  ['Blackrock Depths', 230, [1584], 52, 60, null, 180, ['High Interrogator Gerstahn', 'Lord Roccor', 'Houndmaster Grebmar', 'Pyromancer Loregrain', 'Lord Incendius', 'Warder Stilgiss', 'Verek', 'Fineous Darkvire', "Bael'Gar", 'General Angerforge', 'Golem Lord Argelmach', 'Hurley Blackbreath', 'Phalanx', 'Ribbly Screwspigot', 'Plugger Spazzring', 'Ambassador Flamelash', 'Magmus', 'Emperor Dagran Thaurissan']],
+  ['Blackrock Depths', 230, [1584], 52, 60, null, 180, ['High Interrogator Gerstahn', 'Lord Roccor', 'Houndmaster Grebmar', ['Gorosh the Dervish', 'Grizzle', 'Eviscerator', "Ok'thor the Breaker", "Anub'shiah", 'Hedrum the Creeper'], 'Pyromancer Loregrain', 'Lord Incendius', 'Warder Stilgiss', 'Verek', 'Fineous Darkvire', "Bael'Gar", 'General Angerforge', 'Golem Lord Argelmach', 'Hurley Blackbreath', 'Phalanx', 'Ribbly Screwspigot', 'Plugger Spazzring', 'Ambassador Flamelash', 'Magmus', 'Emperor Dagran Thaurissan']],
   ['Lower Blackrock Spire', 229, [1583], 55, 60, null, 90, ['Highlord Omokk', 'Spirestone Butcher', 'Spirestone Battle Lord', 'Spirestone Lord Magus', "Shadow Hunter Vosh'gajin", 'War Master Voone', 'Mother Smolderweb', 'Crystal Fang', 'Urok Doomhowl', 'Bannok Grimaxe', 'Quartermaster Zigris', 'Halycon', 'Gizrul the Slavener', 'Ghok Bashguud', 'Burning Felguard', 'Overlord Wyrmthalak']],
   ['Dire Maul', 429, [2557, 2577], 55, 60, null, 180, ['Pusillin', 'Zevrim Thornhoof', 'Hydrospawn', 'Lethtendris', 'Alzzin the Wildshaper', 'Tendris Warpwood', 'Illyanna Ravenoak', 'Magister Kalendris', "Immol'thar", 'Prince Tortheldrin', "Tsu'zee", "Guard Mol'dar", 'Stomper Kreeg', 'Guard Fengus', "Guard Slip'kik", 'Captain Kromcrush', "Cho'Rush the Observer", 'King Gordok']],
   ['Stratholme', 329, [2017, 2279], 58, 60, null, 150, ['The Unforgiven', 'Timmy the Cruel', 'Malor the Zealous', 'Cannon Master Willey', 'Archivist Galford', 'Balnazzar', 'Hearthsinger Forresten', 'Skul', 'Magistrate Barthilas', 'Stonespine', "Nerub'enkan", 'Baroness Anastari', 'Maleki the Pallid', 'Ramstein the Gorger', 'Baron Rivendare']],
@@ -588,20 +593,22 @@ const dungeonFoes = new Map() // dungeon name -> Set of creature entries
 for (const [name, map, areas, min, max, faction, minutes, bossNames] of DUNGEON_LIST) {
   const spawned = spawnsByMap.get(map) ?? new Map()
   const bosses = []
-  for (const bossName of bossNames) {
+  const bossOf = (bossName) => {
     const options = creaturesByName.get(bossName) ?? []
     const c = options.find((o) => spawned.has(o.Entry)) ?? options.find((o) => o.Rank >= 1 && o.MaxLevel >= min - 3 && o.MinLevel <= max + 3)
-    if (!c) {
-      console.warn(`${name}: no creature named ${bossName}`)
-      continue
-    }
-    bosses.push(c.Entry)
-    addDungeonMob(c)
+    if (!c) console.warn(`${name}: no creature named ${bossName}`)
+    else addDungeonMob(c)
+    return c?.Entry
   }
+  for (const bossName of bossNames) {
+    const entry = Array.isArray(bossName) ? bossName.map(bossOf).filter(Boolean) : bossOf(bossName)
+    if (Array.isArray(entry) ? entry.length : entry) bosses.push(entry)
+  }
+  const bossEntries = bosses.flat()
   const trash = []
   for (const [entry, count] of spawned) {
     const c = creatures.get(entry)
-    if (bosses.includes(entry) || !isDungeonFoe(c, min)) continue
+    if (bossEntries.includes(entry) || !isDungeonFoe(c, min)) continue
     trash.push([entry, count])
     addDungeonMob(c)
   }
@@ -610,7 +617,7 @@ for (const [name, map, areas, min, max, faction, minutes, bossNames] of DUNGEON_
   if (faction) dungeon.faction = faction
   dungeons.push(dungeon)
   for (const area of areas) dungeonOfArea.set(area, name)
-  dungeonFoes.set(name, new Set([...bosses, ...trash.map(([entry]) => entry)]))
+  dungeonFoes.set(name, new Set([...bossEntries, ...trash.map(([entry]) => entry)]))
 }
 
 // Dungeon quests: the quests for each dungeon (by quest area) whose kills and mob drops are all inside it, picked

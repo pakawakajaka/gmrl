@@ -12,6 +12,7 @@ const { zoneValue } = await import(root + 'leveling.js')
 const { renderDungeons } = await import(root + 'dungeons-view.js')
 const { renderCharacterSheet } = await import(root + 'character-sheet.js')
 const V = await import(root + 'value.js')
+const { getMob } = await import(root + 'combat.js')
 let fails = 0
 const check = (label, ok, extra = '') => { console.log(`${ok ? 'PASS' : 'FAIL'} ${label} ${extra}`); if (!ok) fails++ }
 const seeded = (seed) => () => {
@@ -228,7 +229,7 @@ if (goodRun) {
   const targets = [...card.querySelectorAll('.focus-drops > li')]
   check('focus: dungeon upgrades with tooltip, chance and boss', targets.length > 0 && targets.every((li) => li.querySelector('.tooltip') && /power · .*run.* · \S/.test(li.getAttribute('aria-label'))), targets.map((li) => li.getAttribute('aria-label')).join('; '))
   const dungeon = D.getDungeon(queued)
-  const kills = [...dungeon.bosses.map((entry) => [entry, 1]), ...dungeon.trash.map(([entry, count]) => [entry, count * 0.6])]
+  const kills = [...dungeon.bosses.flatMap((slot) => [slot].flat().map((entry, _, all) => [entry, 1 / all.length])), ...dungeon.trash.map(([entry, count]) => [entry, count * 0.6])]
   const loot = V.lootTargets(c, kills, 0.5)
   const sum = loot.reduce((s, t) => s + t.worth, 0)
   check('lootTargets add up to runGear', Math.abs(sum - V.runGear(c, kills, 0.5)) < 1e-9 * Math.max(1, sum), `${sum}`)
@@ -259,6 +260,20 @@ check('status: resting after the run', weak.every((c) => c.restingAfter === brd.
   weak[1].timeBank = -60
   weak[1].restingAfter = null
   check('status: time owed for other reasons isn\'t resting', !weak[1].farmStatus.startsWith('Resting'), weak[1].farmStatus)
+}
+{
+  // The Ring of Law: one of six arena bosses per run, each counted as a sixth of a kill.
+  const ring = brd.bosses.find(Array.isArray)
+  check('BRD: Ring of Law slot of six', ring?.length === 6 && ring.includes(9027) && getItem(11726)?.name === 'Savage Gladiator Chain')
+  const warrior = make(['Warrior', 'Arms', 'Orc', 'DPS'], 60, 'Searing Gorge')
+  const chain = D.dungeonLoot(warrior, brd).find((t) => t.id === 11726)
+  check('BRD: Savage Gladiator Chain at a sixth of Gorosh', chain?.from === 9027 && Math.abs(chain.chance - 0.5 * (1 - Math.exp(-0.15 / 6))) < 1e-9, JSON.stringify(chain))
+  const group = [0, 1, 2, 3, 4].map((i) => make(HORDE[i], 60, 'Searing Gorge'))
+  const run = D.runDungeon(group, brd, start, seeded(7))
+  const arena = new Set(run.results.flatMap((r) => r.share.found.map((f) => f.source)).filter((s) => ring.some((e) => getMob(e).name === s)))
+  check('BRD: a clear fights one arena boss', run.record.success && run.record.bosses === brd.bosses.length && arena.size === 1, [...arena].join(', '))
+  const atRing = { ...run.record, success: false, bosses: brd.bosses.indexOf(ring) }
+  check('BRD: restored wipe keeps its arena boss', D.restoreRun({ ...atRing, wipedOn: 'Grizzle' }).wipedOn === 'Grizzle' && D.restoreRun({ ...atRing, wipedOn: 'Nobody' }).wipedOn === getMob(ring[0]).name)
 }
 const quester = make(HORDE[5], 12, 'Durotar')
 const questAction = quester.plannedAction

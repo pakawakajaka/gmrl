@@ -55,15 +55,21 @@ export function dungeonLockReason(character, dungeon) {
 }
 export const inRange = (character, dungeon) => !dungeonLockReason(character, dungeon) && character.characterLevel <= dungeon.level[1]
 
-// Level of the dungeon's bosses (median), which sets how strong a group needs to be.
+// A boss slot is a mob entry, or a list of entries one of which is fought each run (Blackrock Depths' Ring of Law).
+const bossOptions = (slot) => (Array.isArray(slot) ? slot : [slot])
+
+// Level of the dungeon's bosses (median, a slot counting once at its highest), which sets how strong a group needs to be.
 const bossLevels = new Map(DUNGEONS.map((d) => {
-  const levels = d.bosses.map((e) => getMob(e).level[1]).sort((a, b) => a - b)
+  const levels = d.bosses.map((slot) => Math.max(...bossOptions(slot).map((e) => getMob(e).level[1]))).sort((a, b) => a - b)
   return [d.name, levels[Math.floor(levels.length / 2)]]
 }))
 export const bossLevel = (dungeon) => bossLevels.get(dungeon.name)
 
-// What one clear kills: [mob entry, count].
-const killLists = new Map(DUNGEONS.map((d) => [d.name, [...d.bosses.map((entry) => [entry, 1]), ...d.trash.map(([entry, count]) => [entry, count * CLEAR_SHARE])]]))
+// What one clear kills on average: [mob entry, count].
+const killLists = new Map(DUNGEONS.map((d) => [d.name, [
+  ...d.bosses.flatMap((slot) => bossOptions(slot).map((entry, _, options) => [entry, 1 / options.length])),
+  ...d.trash.map(([entry, count]) => [entry, count * CLEAR_SHARE]),
+]]))
 
 function canTake(character, id, done, groups) {
   const quest = DUNGEON_QUESTS[id]
@@ -355,8 +361,9 @@ export function runDungeon(members, dungeon, now, random = Math.random) {
   const progress = success ? 1 : Math.max(0.1, pace / MIN_PACE) * 0.9
   const seconds = Math.round(success ? runSeconds(dungeon, pace) : dungeon.minutes * 60 * progress)
   const bossKills = success ? dungeon.bosses.length : Math.floor(dungeon.bosses.length * progress)
+  const fought = dungeon.bosses.map((slot) => (Array.isArray(slot) ? slot[Math.floor(random() * slot.length)] : slot))
   const kills = [
-    ...dungeon.bosses.slice(0, bossKills).map((entry) => [entry, 1]),
+    ...fought.slice(0, bossKills).map((entry) => [entry, 1]),
     ...dungeon.trash.map(([entry, count]) => [entry, Math.round(count * CLEAR_SHARE * progress)]).filter(([, n]) => n > 0),
   ]
   const wornBefore = members.map((c) => new Set(Object.values(c.equipment)))
@@ -365,7 +372,7 @@ export function runDungeon(members, dungeon, now, random = Math.random) {
   let trash = 0
   for (const [entry, count] of kills) {
     const mob = getMob(entry)
-    if (!dungeon.bosses.includes(entry)) trash += count
+    if (!fought.includes(entry)) trash += count
     members.forEach((c, i) => {
       shares[i].xp += killXp(c.characterLevel, mobLevelFor(mob, c.characterLevel), mob) * GROUP_XP * count
       shares[i].copper += ((mob.coin ?? 0) + (mob.value ?? 0)) * count / GROUP_SIZE
@@ -402,7 +409,7 @@ export function runDungeon(members, dungeon, now, random = Math.random) {
     success,
     bosses: bossKills,
     trash,
-    ...(!success && { wipedOn: getMob(dungeon.bosses[bossKills])?.name ?? null }),
+    ...(!success && { wipedOn: getMob(fought[bossKills])?.name ?? null }),
     members: members.map((c, i) => ({
       id: c.id,
       name: c.characterName,
@@ -439,6 +446,10 @@ export function restoreRun(run) {
     .map((l) => ({ item: l.item, to: l.to, need: l.need === true, from: typeof l.from === 'string' ? l.from.slice(0, 60) : '' }))
   const success = run.success === true
   const bosses = Number.isInteger(run.bosses) ? Math.min(Math.max(run.bosses, 0), dungeon.bosses.length) : 0
+  const wipedOn = () => {
+    const names = bossOptions(dungeon.bosses[bosses] ?? []).map((e) => getMob(e)?.name).filter(Boolean)
+    return names.includes(run.wipedOn) ? run.wipedOn : (names[0] ?? null)
+  }
   return {
     id: run.id,
     at: Number(run.at),
@@ -448,7 +459,7 @@ export function restoreRun(run) {
     success,
     bosses,
     trash: amount(run.trash),
-    ...(!success && { wipedOn: getMob(dungeon.bosses[bosses])?.name ?? null }),
+    ...(!success && { wipedOn: wipedOn() }),
     members,
     loot,
   }
