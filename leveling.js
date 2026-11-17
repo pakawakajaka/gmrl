@@ -7,6 +7,7 @@
 // player sets it to go after an item (see Character.wanted) and when it gets it.
 import { grindPool } from './combat.js'
 import { activeQuests, questPlan } from './quests.js'
+import { groundSpeed } from './spells.js'
 import { grindValue, worth } from './value.js'
 import { wantedPlaces } from './wanted.js'
 import { ZONES, getZone, zoneLockReason } from './zones.js'
@@ -28,13 +29,16 @@ const startZoneNames = new Set(Object.values(START_ZONES))
 
 const PLAN_HOURS = 2
 export const MOVE_MARGIN = 1.15
-// Flying to another zone, and to another continent.
-export const ZONE_TRAVEL_SECONDS = 900
-const CONTINENT_TRAVEL_SECONDS = 1800
+// Getting to another zone: riding to the flight master and from where it lands to the farming (faster
+// mounted, see groundSpeed), and the flight, longer to another continent.
+export const GROUND_TRAVEL_SECONDS = 300
+export const FLIGHT_SECONDS = 600
+const CONTINENT_FLIGHT_SECONDS = 1500
 // Zones are weighed while their top level is no more than this far below the character's.
 const LEVELS_BELOW = 3
 
-export const travelSeconds = (from, to) => (!from || from === to ? 0 : from.continent === to.continent ? ZONE_TRAVEL_SECONDS : CONTINENT_TRAVEL_SECONDS)
+export const travelSeconds = (character, from, to) => (!from || from === to ? 0
+  : GROUND_TRAVEL_SECONDS / groundSpeed(character) + (from.continent === to.continent ? FLIGHT_SECONDS : CONTINENT_FLIGHT_SECONDS))
 
 // Worth per hour of farming the zone after `travel` seconds getting there: its quests worth doing (see
 // activeQuests), and grinding for the rest of PLAN_HOURS.
@@ -64,7 +68,7 @@ export function zoneOptions(character) {
   const wanted = wantedPlaces(character).zones
   return ZONES
     .filter((z) => z === here || (!zoneLockReason(character, z) && (z.maxLevel >= low || wanted.has(z.name))))
-    .map((z) => ({ zone: z.name, value: zoneValue(character, z.name, travelSeconds(here, z)) }))
+    .map((z) => ({ zone: z.name, value: zoneValue(character, z.name, travelSeconds(character, here, z)) }))
     .sort((a, b) => b.value - a.value)
 }
 
@@ -94,7 +98,7 @@ export function nextZone(character, reason) {
   const best = stuck ? others.find((o) => canFarm(character, o.zone)) : options[0]
   if (!best || best.zone === here.name) return undefined
   if (!stuck && best.value <= options.find((o) => o.zone === here.name).value * MOVE_MARGIN) return undefined
-  return { zone: best.zone, reason, seconds: travelSeconds(here, getZone(best.zone)) }
+  return { zone: best.zone, reason, seconds: travelSeconds(character, here, getZone(best.zone)) }
 }
 
 const canFarm = (character, zoneName) => grindPool(character, zoneName).total > 0 || activeQuests(character, zoneName).length > 0

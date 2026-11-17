@@ -4,7 +4,7 @@ import { averageItemLevel, characterPower } from './power.js'
 import { SLOTS, baseId, bestLoadout, getItem, getQuest, itemKey, levelToUse, offSpecGear, questRewardsFor, rollMobLoot, specOptions } from './gear.js'
 import { farmRates, questXp } from './combat.js'
 import { activeQuests, creditKill, nextAction, objectivesOf, pickUpQuests, tidyQuestLog, workable } from './quests.js'
-import { isClassSpell, startingSpells, trainSpells } from './spells.js'
+import { RIDING, isClassSpell, startingSpells, trainSpells } from './spells.js'
 import { autoSpend, learnTalent, sanitizeTalents, talentPoints, unlearnTalent } from './talents.js'
 import { nextZone } from './leveling.js'
 import { grindPlan, huntedMobs } from './value.js'
@@ -25,7 +25,7 @@ export default class Character {
   #rethink = null // a nextZone reason to look for a better zone at the next chance, after the wanted item changed
   #gotWanted = null // the wanted item's key once got, until it's in the loot log
 
-  constructor({ id = crypto.randomUUID(), characterName, characterClass, characterSpec, characterRace, characterRole, characterLevel = MIN_LEVEL, characterXp = 0, zone = null, copper = 0, spells, talents, equipment = {}, bag = [], questsDone = [], questLog = {}, timeBank = 0, lootLog = [], honorableKills = 0, honor = 0, honorToday = null, honorPeriod = null, rankPoints = 0, highestRank = 0, honorLastPeriod = null, pvpKills = 0, pvpDeaths = 0, pvpLog = [], pvpReadyAt = 0, hearthReadyAt = 0, dungeonQuests = [], dungeonQueue = null, dungeonClears = {}, queueDeclined = null, restingAfter = null, wanted = null, kept = [] }) {
+  constructor({ id = crypto.randomUUID(), characterName, characterClass, characterSpec, characterRace, characterRole, characterLevel = MIN_LEVEL, characterXp = 0, zone = null, copper = 0, spells, talents, equipment = {}, bag = [], questsDone = [], questLog = {}, timeBank = 0, lootLog = [], honorableKills = 0, honor = 0, honorToday = null, honorPeriod = null, rankPoints = 0, highestRank = 0, honorLastPeriod = null, pvpKills = 0, pvpDeaths = 0, pvpLog = [], pvpReadyAt = 0, hearthReadyAt = 0, dungeonQuests = [], dungeonQueue = null, dungeonClears = {}, queueDeclined = null, restingAfter = null, wanted = null, kept = [], mount = characterLevel >= RIDING[0].level ? RIDING[0].key : null }) {
     this.id = id
     this.characterName = Character.formatName(characterName)
     this.characterClass = characterClass
@@ -64,6 +64,7 @@ export default class Character {
     this.restingAfter = restingAfter // name of the dungeon whose run it's still paying back time for (negative timeBank), or null
     this.wanted = wanted // base item id a player set the character to go after (one at a time), or null; see wanted.js
     this.kept = kept // item ids got by wanting them, newest first: never vendored, at most KEPT_SIZE
+    this.mount = mount // key of the best mount bought (see RIDING in spells.js), or null
   }
 
   get xpToNextLevel() {
@@ -361,6 +362,9 @@ export default class Character {
     const fraction = (value, max) => (Number.isFinite(Number(value)) ? Math.min(Math.max(Number(value), 0), max) : 0)
     const equipped = data.equipment && typeof data.equipment === 'object' ? Object.values(data.equipment) : []
     this.copper = Math.floor(fraction(data.copper, Number.MAX_SAFE_INTEGER))
+    // Saves from before mounts cost gold (version 4 and older): a character of riding level already rode.
+    const mount = data.mount === undefined && this.characterLevel >= RIDING[0].level ? RIDING[0].key : data.mount
+    this.mount = RIDING.some((r) => r.key === mount && r.level <= this.characterLevel) ? mount : null
     const spells = Array.isArray(data.spells) ? data.spells.map(Number).filter((id) => isClassSpell(this.characterClass, id)) : []
     this.spells = [...new Set([...startingSpells(this.characterClass), ...spells])]
     const talents = sanitizeTalents(this.characterClass, this.characterLevel, data.talents)

@@ -454,6 +454,7 @@ main:has(.farm) {
 .badge-contested { --badge-color: var(--text-muted); }
 .badge-sanctuary { --badge-color: var(--healer); }
 .badge-wanted { --badge-color: var(--accent); }
+.badge-top-damage { --badge-color: var(--accent); }
 
 .card-link {
   height: 100%;
@@ -2293,6 +2294,50 @@ main:has(.character-sheet) {
 
 .dungeon-runs-title {
   margin-bottom: 0.75rem;
+}
+
+.dungeon-meter-boards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr));
+  gap: 1rem 1.5rem;
+}
+
+.dungeon-meter {
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.dungeon-meter h4,
+.dungeon-meters h3 {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.dungeon-meter h4 {
+  margin: 0 0 0.5rem;
+}
+
+.dungeon-meter .stat-bar {
+  grid-template-columns: 6.5rem 1fr minmax(8.5rem, auto);
+}
+
+.dungeon-meter .stat-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.death-log {
+  display: grid;
+  gap: 0.2rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.9rem;
 }
 
 /* Character sheet dungeon panel */

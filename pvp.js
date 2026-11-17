@@ -9,12 +9,12 @@
 // winner. The fight is then played out hit by hit, each player's luck nudged just enough that it ends
 // the way the roll went. Once others join it's a brawl, everyone simulated together, each with a roll for
 // how well it plays. Paladins bubble and hearth out of a lost fight.
-// The data has no mounts, stealth or Divine Shield, so levels and classes stand in for them; Travel Form
-// comes from the druid's trained spells.
+// The data has no stealth or Divine Shield, so levels and classes stand in for them; Travel Form
+// comes from the druid's trained spells and mounts are bought (mountOf in spells.js).
 import { combatOf, restSeconds } from './combat.js'
 import { CLASSES, MAX_LEVEL, MIN_LEVEL, RACES } from './data.js'
 import { HEARTH_SECONDS, MAX_FIGHT_SECONDS, brawl, duelSim, variantsFor } from './sim.js'
-import { effectValue, getSpell, knownAbilities } from './spells.js'
+import { groundSpeed } from './spells.js'
 import { getZone, grayLevel, zeroDifference } from './zones.js'
 import { dayOf, periodOf } from './reset.js'
 
@@ -56,9 +56,6 @@ const STEALTH_SEEN = 0.1 // ... a stealthed one (rogues, druids, night elves)
 const MOUNTED_SPOT = 1.5 // a fast enemy covers more ground and notices more
 const CATCH = { faster: 0.9, even: 0.3, slower: 0.05 } // the chance a chaser catches a runner
 const EVADE_SECONDS = 60 // farming lost getting away
-const MOUNT_LEVEL = 40
-const MOUNT_SPEED = 1.6
-const TRAVEL_FORMS = { Shaman: ['Ghost Wolf', 20, 1.4], Hunter: ['Aspect of the Cheetah', 20, 1.3] } // name, level, speed
 
 // Fights drawing others in.
 const SIDE_LIMIT = 5
@@ -173,26 +170,10 @@ function exponential(rate, random) {
 const pick = (list, random) => list[Math.floor(random() * list.length)]
 const ready = (c, at) => (c.pvpReadyAt ?? 0) <= at
 
-// How `c` gets around faster than on foot: { name, speed } or null. A riding mount from level 40; before
-// that a trained Travel Form, Ghost Wolf or Aspect of the Cheetah.
-export function mountOf(c) {
-  if (c.characterLevel >= MOUNT_LEVEL) return { name: 'Riding', speed: MOUNT_SPEED }
-  const travel = c.characterClass === 'Druid' && knownAbilities(c)['Travel Form']
-  if (travel) {
-    const passive = getSpell(getSpell(travel).passive)
-    const e = passive.effects.find((x) => x.aura === 31)
-    return { name: 'Travel Form', speed: 1 + effectValue(passive, e, c.characterLevel) / 100 }
-  }
-  const form = TRAVEL_FORMS[c.characterClass]
-  return form && c.characterLevel >= form[1] ? { name: form[0], speed: form[2] } : null
-}
-
-const speedOf = (c) => mountOf(c)?.speed ?? 1
-
 // Stealth, Prowl or Shadowmeld.
 const stealthy = (c) => c.characterClass === 'Rogue' || c.characterRace === 'Night Elf' || (c.characterClass === 'Druid' && c.characterLevel >= 20)
 
-const travelSeconds = (c) => JOIN_YARDS / (YARDS_PER_SECOND * speedOf(c))
+const travelSeconds = (c) => JOIN_YARDS / (YARDS_PER_SECOND * groundSpeed(c))
 
 // A paladin's Divine Shield seconds if it can bubble and hearth out at `at`, else 0.
 function bubbleHearth(c, at) {
@@ -265,8 +246,8 @@ function react(spotter, enemy, at, here, random) {
 // chaser may have noticed; a fast one notices more. A hider it notices is found; a runner it may catch.
 // Getting away costs the runner farming time but doesn't count as a fight.
 function evade(runner, chaser, at, here, random) {
-  const fast = speedOf(chaser)
-  const ratio = fast / speedOf(runner)
+  const fast = groundSpeed(chaser)
+  const ratio = fast / groundSpeed(runner)
   const outrun = ratio > 1.05 ? CATCH.faster : ratio > 0.95 ? CATCH.even : CATCH.slower
   const hidden = stealthy(runner) ? STEALTH_SEEN : HIDE_SEEN
   const how = hidden <= outrun ? 'hid' : 'ran'

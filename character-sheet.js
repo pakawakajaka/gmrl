@@ -3,8 +3,7 @@ import { CLASS_BITS, DUNGEON_QUESTS, INVENTORY_TYPES, QUALITIES, QUEST_ITEMS, RA
 import { SCHOOLS, STAT_NAMES, characterStats } from './stats.js'
 import { drinkFor, foodFor, getMob, respawnWait } from './combat.js'
 import { QUEST_LOG_SIZE, activeQuests, objectivesOf, questKills, questLogIds, questPlan, questProgress, questZone, rewardWorth, zoneQuestOffers } from './quests.js'
-import { mountOf } from './pvp.js'
-import { getSpell, knownAbilities } from './spells.js'
+import { getSpell, knownAbilities, mountOf } from './spells.js'
 import { renderTalentTile } from './talents-view.js'
 import { talentKey } from './talents.js'
 import { zoneOptions } from './leveling.js'
@@ -273,7 +272,7 @@ const QUEST_OFFERS = 10
 // it and dungeon quests for dungeons in its level range. Kept until what they depend on changes.
 const offerCache = new WeakMap()
 function questOffers(character) {
-  const key = `${character.characterLevel}|${character.characterSpec}|${character.characterRole}|${Object.values(character.equipment).join()}|${talentKey(character)}|${character.questsDone.length}|${questLogIds(character).join()}|${character.wanted}`
+  const key = `${character.characterLevel}|${character.characterSpec}|${character.characterRole}|${Object.values(character.equipment).join()}|${talentKey(character)}|${character.questsDone.length}|${questLogIds(character).join()}|${character.wanted}|${character.mount}`
   const cached = offerCache.get(character)
   if (cached?.key === key) return cached.offers
   const dungeon = [...pendingQuests(character)].flatMap(([zone, ids]) => ids.map((id) => ({
@@ -365,7 +364,7 @@ const focusScroll = (key, items) => el('ul', { class: 'focus-list focus-scroll',
 // The rows behind the lists, kept until what they depend on changes (the sheet re-renders on every event).
 const focusCache = new WeakMap()
 function focusRows(character) {
-  const key = `${character.zone}|${character.characterLevel}|${character.characterSpec}|${character.characterRole}|${Object.values(character.equipment).join()}|${talentKey(character)}|${character.questsDone.length}|${character.dungeonQuests.join()}|${character.dungeonQueue?.dungeons.join() ?? ''}|${character.wanted}`
+  const key = `${character.zone}|${character.characterLevel}|${character.characterSpec}|${character.characterRole}|${Object.values(character.equipment).join()}|${talentKey(character)}|${character.questsDone.length}|${character.dungeonQuests.join()}|${character.dungeonQueue?.dungeons.join() ?? ''}|${character.wanted}|${character.mount}`
   const cached = focusCache.get(character)
   if (cached?.key === key) return cached
   const zones = zoneOptions(character)

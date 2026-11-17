@@ -6,9 +6,11 @@
 import { CLASSES, MAX_LEVEL, MIN_LEVEL, RACES, ROLES } from './data.js'
 import { CLASS_BITS, DUNGEONS, DUNGEON_QUESTS, RACE_BITS, baseId, bestLoadout, canUseNow, getItem, questRewardsFor, rollMobLoot } from './gear.js'
 import { getMob, killXp, mobLevelFor, questXp } from './combat.js'
+import { foeFor } from './sim.js'
 import { levelPower } from './power.js'
-import { QUEST_LOG_SIZE, QUEST_SECONDS, logRoom, makeRoom, questLogIds, zoneQuestSet } from './quests.js'
-import { zoneValue } from './leveling.js'
+import { QUEST_LOG_SIZE, logRoom, makeRoom, questLogIds, questSeconds, zoneQuestSet } from './quests.js'
+import { FLIGHT_SECONDS, GROUND_TRAVEL_SECONDS, zoneValue } from './leveling.js'
+import { groundSpeed } from './spells.js'
 import { lootTargets, rewardGain, runGear, worth } from './value.js'
 import { talentKey } from './talents.js'
 import { wantedPlaces } from './wanted.js'
@@ -17,7 +19,8 @@ import { getZone } from './zones.js'
 export { DUNGEONS }
 export const GROUP_SIZE = 5
 export const RUN_LOG_SIZE = 25
-export const TRAVEL_SECONDS = 900 // to another zone's quest giver and back
+export const RUN_METER_SIZE = 5 // the newest runs that keep their meters (see runMeters)
+// A pickup trip to another zone's quest giver and back is a zone trip (see travelSeconds in leveling.js).
 const PICKUP_SECONDS = 60
 // A pickup trip's quests must be worth this many times the farming the trip costs.
 const ERRAND_MARGIN = 2
@@ -126,10 +129,10 @@ function pickupValue(character, id, w) {
 // never swapping for a quest worth the same, which would make trips back and forth forever; chain steps
 // are done on the spot and take none), by where their giver is. A trip is worth making when its quests
 // are worth ERRAND_MARGIN times the farming the trip costs where the character is; skipped ones wait until
-// more quests there add up. Recomputed when zone, level, gear, talents, quests or the wanted item change.
+// more quests there add up. Recomputed when zone, level, gear, talents, quests, mount or the wanted item change.
 const tripCache = new WeakMap()
 export function errandTrips(character) {
-  const key = `${character.zone}|${character.characterLevel}|${character.questsDone.length}|${questLogIds(character).join()}|${Object.values(character.equipment).join()}|${talentKey(character)}|${character.wanted}`
+  const key = `${character.zone}|${character.characterLevel}|${character.questsDone.length}|${questLogIds(character).join()}|${Object.values(character.equipment).join()}|${talentKey(character)}|${character.wanted}|${character.mount}`
   const cached = tripCache.get(character)
   if (cached?.key === key) return cached.trips
   const trips = new Map()
@@ -146,8 +149,8 @@ export function errandTrips(character) {
         .filter(({ id }) => DUNGEON_QUESTS[id].step || take(id))
         .map(({ id }) => id)
       if (!quests.length) continue
-      const seconds = (zone === character.zone ? 0 : TRAVEL_SECONDS) +
-        quests.reduce((sum, id) => sum + (DUNGEON_QUESTS[id].step ? QUEST_SECONDS : PICKUP_SECONDS), 0)
+      const seconds = (zone === character.zone ? 0 : GROUND_TRAVEL_SECONDS / groundSpeed(character) + FLIGHT_SECONDS) +
+        quests.reduce((sum, id) => sum + (DUNGEON_QUESTS[id].step ? questSeconds(character) : PICKUP_SECONDS), 0)
       const value = quests.reduce((sum, id) => sum + pickupValue(character, id, w), 0)
       if (value >= ERRAND_MARGIN * farming * seconds) trips.set(zone, { quests, seconds, value })
     }
@@ -423,8 +426,75 @@ export function runDungeon(members, dungeon, now, random = Math.random) {
       quests: results[i].quests,
     })),
     loot,
+    meters: runMeters(members, kills, seconds, pace, success ? null : getMob(fought[bossKills])?.name, random),
   }
   return { record, members, results }
+}
+
+// Run meters.
+const COMBAT_SHARE = 0.6 // of a run spent fighting
+const DAMAGE_ROLE = { Tank: 0.5, Healer: 0.1, DPS: 1 }
+const TAKEN_ROLE = { Tank: 6, Healer: 1, DPS: 1 }
+const HEALING_CLASSES = new Set(['Druid', 'Paladin', 'Priest', 'Shaman'])
+const OFF_HEALING = 0.1 // how much a healing class outside the healer role heals, against a healer
+const HEALED = 0.9 // of the damage taken a healer heals; food and regen do the rest
+const DEATH_ODDS = 0.3 // each member's chance to die at MIN_PACE, falling to none at SAFE_PACE
+const SAFE_PACE = 1.5
+
+// A run's meters, estimated rather than simulated: { combat (seconds fighting), damage, healing, taken (an
+// amount per member), deaths: [{ to: member index, by: mob name }] }. Every mob killed takes its health in
+// damage, split by the members' base power and role, with some luck. It deals its DPS for its share of the
+// fighting (by health), mostly to the tank; the healer heals most of it back, other healing classes a
+// little. Members of slower groups die more, each to a mob killed (more often the common ones); a wipe kills
+// everyone on `wipedOn`.
+function runMeters(members, kills, seconds, pace, wipedOn, random) {
+  const level = Math.round(members.reduce((n, c) => n + c.characterLevel, 0) / members.length)
+  const combat = Math.max(1, Math.round(seconds * COMBAT_SHARE))
+  let health = 0
+  let hurt = 0
+  for (const [entry, count] of kills) {
+    const mob = getMob(entry)
+    const hp = foeFor(mob, mobLevelFor(mob, level)).hp * count
+    health += hp
+    hurt += (mob.dps ?? 0) * hp
+  }
+  const taken = health ? (hurt / health) * combat : 0
+  const luck = () => 0.8 + 0.4 * random()
+  const split = (total, weights) => {
+    const sum = weights.reduce((n, w) => n + w, 0)
+    return weights.map((w) => (sum ? Math.round((total * w) / sum) : 0))
+  }
+  const heals = members.map((c) => (c.characterRole === 'Healer' ? 1 : HEALING_CLASSES.has(c.characterClass) ? OFF_HEALING : 0) * luck())
+  const deaths = []
+  const odds = DEATH_ODDS * Math.min(Math.max((SAFE_PACE - pace) / (SAFE_PACE - MIN_PACE), 0), 1)
+  const killed = kills.reduce((n, [, count]) => n + count, 0)
+  members.forEach((c, i) => {
+    if (!killed || random() >= odds) return
+    let roll = random() * killed
+    const [entry] = kills.find(([, count]) => (roll -= count) < 0) ?? kills[kills.length - 1]
+    deaths.push({ to: i, by: getMob(entry).name })
+  })
+  if (wipedOn) members.forEach((c, i) => deaths.push({ to: i, by: wipedOn }))
+  return {
+    combat,
+    damage: split(health, members.map((c) => c.power.base * DAMAGE_ROLE[c.characterRole] * luck())),
+    healing: split(taken * HEALED * Math.min(1, heals.reduce((n, w) => n + w, 0)), heals),
+    taken: split(taken, members.map((c) => TAKEN_ROLE[c.characterRole] * luck())),
+    deaths,
+  }
+}
+
+// Rebuilds a run's meters (see runMeters) from untrusted saved data for a group of `size`, or null.
+function restoreMeters(meters, size) {
+  if (!meters || typeof meters !== 'object') return null
+  const amount = (v) => (Number.isFinite(Number(v)) ? Math.min(Math.max(Math.round(Number(v)), 0), 1e9) : 0)
+  const amounts = (list) => (Array.isArray(list) && list.length === size ? list.map(amount) : null)
+  const [damage, healing, taken] = [meters.damage, meters.healing, meters.taken].map(amounts)
+  if (!damage || !healing || !taken) return null
+  const deaths = (Array.isArray(meters.deaths) ? meters.deaths.slice(0, size * 10) : [])
+    .filter((d) => d && Number.isInteger(d.to) && d.to >= 0 && d.to < size && typeof d.by === 'string')
+    .map((d) => ({ to: d.to, by: d.by.slice(0, 60) }))
+  return { combat: Math.max(1, amount(meters.combat)), damage, healing, taken, deaths }
 }
 
 // Rebuilds a run record from untrusted saved data, or null if it isn't one.
@@ -450,6 +520,7 @@ export function restoreRun(run) {
     const names = bossOptions(dungeon.bosses[bosses] ?? []).map((e) => getMob(e)?.name).filter(Boolean)
     return names.includes(run.wipedOn) ? run.wipedOn : (names[0] ?? null)
   }
+  const meters = restoreMeters(run.meters, members.length)
   return {
     id: run.id,
     at: Number(run.at),
@@ -462,5 +533,6 @@ export function restoreRun(run) {
     ...(!success && { wipedOn: wipedOn() }),
     members,
     loot,
+    ...(meters && { meters }),
   }
 }

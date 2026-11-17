@@ -4,7 +4,7 @@ import { MIN_LEVEL, defaultSpec } from './data.js'
 import { getZone, zoneLockReason } from './zones.js'
 import { startZone } from './leveling.js'
 import { encounterRecord, restoreEncounter, worldPvp } from './pvp.js'
-import { RUN_LOG_SIZE, autoQueue, formGroups, joinQueue, leaveQueue, restoreRun } from './dungeons.js'
+import { RUN_LOG_SIZE, RUN_METER_SIZE, autoQueue, formGroups, joinQueue, leaveQueue, restoreRun } from './dungeons.js'
 import { honorResets } from './honor.js'
 import { periodOf, periodStart } from './reset.js'
 import { baseId } from './gear.js'
@@ -24,13 +24,19 @@ export const ENCOUNTER_DETAIL_SIZE = 10 // the newest encounters that keep their
 //    replaces honorLastDay. Older saves count honorToday toward its period and drop honorLastDay.
 // 4: characters can want an item (wanted) and keep what they got by wanting it (kept), and remember the
 //    dungeon they're back from (restingAfter). Older saves want nothing and rest after nothing.
-export const SAVE_VERSION = 4
+// 5: mounts are bought with gold (mount). Older saves ride from level 40, with no epic mount yet.
+export const SAVE_VERSION = 5
 // Accounts that get dev tools (e.g. Save to file). Not a security boundary: the save endpoint is dev-server only.
 const DEV_ACCOUNT_IDS = new Set(['379d1f11-f7ac-4e09-ab3c-b51930ba2aa8'])
 
 // Drops the combat log from all but the newest encounters.
 function trimLogs(encounters) {
   for (const e of encounters.slice(ENCOUNTER_DETAIL_SIZE)) e.log = null
+}
+
+// Drops the meters from all but the newest dungeon runs.
+function trimMeters(runs) {
+  for (const r of runs.slice(RUN_METER_SIZE)) delete r.meters
 }
 
 // Account -> guilds -> characters. Each guild is of one faction and every character is in exactly one guild.
@@ -117,6 +123,7 @@ export default class Account {
     if (this.encounters.length > ENCOUNTER_LOG_SIZE) this.encounters.length = ENCOUNTER_LOG_SIZE
     if (this.dungeonRuns.length > RUN_LOG_SIZE) this.dungeonRuns.length = RUN_LOG_SIZE
     trimLogs(this.encounters)
+    trimMeters(this.dungeonRuns)
     for (const [character, items] of upgraded) {
       const worn = new Set(Object.values(character.equipment))
       for (const item of items) if (worn.has(item)) result.upgrades.push({ character, item })
@@ -231,7 +238,7 @@ export default class Account {
       const c = { ...saved, characterSpec: saved.characterSpec ?? defaultSpec(saved.characterClass, saved.characterRole) }
       if (Object.keys(Character.validate(c)).length > 0) return null
       seen.add(c.id)
-      const character = new Character({ ...c, characterXp: 0, zone: null, copper: 0, spells: undefined, talents: {}, equipment: {}, bag: [], questsDone: [], questLog: {}, timeBank: 0, lootLog: [], honorableKills: 0, honor: 0, honorToday: null, honorPeriod: null, rankPoints: 0, highestRank: 0, honorLastPeriod: null, pvpKills: 0, pvpDeaths: 0, pvpLog: [], pvpReadyAt: 0, hearthReadyAt: 0, dungeonQuests: [], dungeonQueue: null, dungeonClears: {}, queueDeclined: null, restingAfter: null, wanted: null, kept: [] })
+      const character = new Character({ ...c, characterXp: 0, zone: null, copper: 0, spells: undefined, talents: {}, equipment: {}, bag: [], questsDone: [], questLog: {}, timeBank: 0, lootLog: [], honorableKills: 0, honor: 0, honorToday: null, honorPeriod: null, rankPoints: 0, highestRank: 0, honorLastPeriod: null, pvpKills: 0, pvpDeaths: 0, pvpLog: [], pvpReadyAt: 0, hearthReadyAt: 0, dungeonQuests: [], dungeonQueue: null, dungeonClears: {}, queueDeclined: null, restingAfter: null, wanted: null, kept: [], mount: null })
       const xp = Number(c.characterXp)
       if (Number.isFinite(xp) && xp > 0 && xp < character.xpToNextLevel) character.characterXp = xp
       if (!zoneLockReason(character, getZone(c.zone))) character.zone = c.zone
@@ -292,6 +299,7 @@ export default class Account {
     const encounters = (Array.isArray(data.encounters) ? data.encounters.slice(0, ENCOUNTER_LOG_SIZE) : []).map(restoreEncounter).filter(Boolean)
     trimLogs(encounters)
     const runs = (Array.isArray(data.dungeonRuns) ? data.dungeonRuns.slice(0, RUN_LOG_SIZE) : []).map(restoreRun).filter(Boolean)
+    trimMeters(runs)
     return new Account(
       String(data.accountName),
       guilds,

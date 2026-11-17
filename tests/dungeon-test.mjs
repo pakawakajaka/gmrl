@@ -274,6 +274,34 @@ check('status: resting after the run', weak.every((c) => c.restingAfter === brd.
   check('BRD: a clear fights one arena boss', run.record.success && run.record.bosses === brd.bosses.length && arena.size === 1, [...arena].join(', '))
   const atRing = { ...run.record, success: false, bosses: brd.bosses.indexOf(ring) }
   check('BRD: restored wipe keeps its arena boss', D.restoreRun({ ...atRing, wipedOn: 'Grizzle' }).wipedOn === 'Grizzle' && D.restoreRun({ ...atRing, wipedOn: 'Nobody' }).wipedOn === getMob(ring[0]).name)
+
+  // Meters: an amount per member; DPS out-damage the tank and healer, the healer heals most, the tank takes most.
+  const m = run.record.meters
+  const top = (list) => list.indexOf(Math.max(...list))
+  check('meters: per member', ['damage', 'healing', 'taken'].every((k) => m[k].length === 5) && m.combat > 0 && m.combat < run.record.seconds)
+  check('meters: DPS out-damage tank and healer', m.damage.slice(2).every((n) => n > m.damage[0] && n > m.damage[1]), m.damage.join())
+  check('meters: healer heals, tank takes most', top(m.healing) === 1 && m.healing[2] === 0 && top(m.taken) === 0, `${m.healing} / ${m.taken}`)
+  check('meters: deaths name a mob killed', m.deaths.every((d) => d.to >= 0 && d.to < 5 && typeof d.by === 'string'))
+  check('meters: survive save', JSON.stringify(D.restoreRun(JSON.parse(JSON.stringify(run.record))).meters) === JSON.stringify(m))
+  check('meters: bad ones dropped', !('meters' in D.restoreRun({ ...run.record, meters: { ...m, damage: [1, 2] } })) &&
+    JSON.stringify(D.restoreRun({ ...run.record, meters: { ...m, deaths: [{ to: 7, by: 'x' }, { to: 0, by: 5 }, null] } }).meters.deaths) === '[]')
+  check('meters: wipe kills everyone on its boss', wipe.record.meters.deaths.filter((d) => d.by === wipe.record.wipedOn).length === 5)
+  const acc = accountOf('Meters', [], start)
+  acc.dungeonRuns = Array.from({ length: 7 }, () => JSON.parse(JSON.stringify({ ...run.record, id: crypto.randomUUID() })))
+  const loaded = Account.fromJSON(JSON.parse(JSON.stringify(acc)), start)
+  check('meters: kept for the newest 5 runs', loaded.dungeonRuns.length === 7 && loaded.dungeonRuns.every((r, i) => (i < 5) === !!r.meters))
+  const page = renderDungeons({ account: loaded, runId: loaded.dungeonRuns[0].id })
+  check('meters: run page shows the boards', page.querySelectorAll('.dungeon-meter').length === 4 && page.querySelectorAll('.dungeon-meter .stat-bar').length === 5 + 1 + 5)
+  check('meters: old run says why there are none', /last 5 runs/.test(renderDungeons({ account: loaded, runId: loaded.dungeonRuns[6].id }).textContent))
+
+  // Badges: Top Damage goes to the top of the damage meter, only on dungeon runs with meters.
+  const { earnedBadges } = await import(root + 'badges.js')
+  const earned = earnedBadges('dungeon', run.record)
+  check('badges: Top Damage to the top damage dealer', earned.length === 1 && earned[0].key === 'top-damage' && earned[0].to.join() === String(top(m.damage)))
+  check('badges: none without meters or for other kinds', !earnedBadges('dungeon', loaded.dungeonRuns[6]).length && !earnedBadges('raid', run.record).length)
+  const cards = [...page.querySelectorAll('.encounter-member')]
+  check('badges: shown on the member card', page.querySelectorAll('.badge-top-damage').length === 1 && cards[top(m.damage)].querySelector('.badge-top-damage')?.textContent === 'Top Damage')
+  check('badges: none on an old run', !renderDungeons({ account: loaded, runId: loaded.dungeonRuns[6].id }).querySelector('.encounter-member .badge'))
 }
 const quester = make(HORDE[5], 12, 'Durotar')
 const questAction = quester.plannedAction

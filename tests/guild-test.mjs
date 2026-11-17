@@ -14,7 +14,7 @@ Object.assign(globalThis, { window: w, document: w.document, location: w.locatio
 globalThis.addEventListener = w.addEventListener.bind(w)
 globalThis.setInterval = () => {}
 
-const { default: Account } = await import(ROOT + 'account.js')
+const { default: Account, SAVE_VERSION } = await import(ROOT + 'account.js')
 const { default: Character } = await import(ROOT + 'character.js')
 const { default: Guild } = await import(ROOT + 'guild.js')
 const { createDefaultAccount } = await import(ROOT + 'storage.js')
@@ -29,7 +29,7 @@ const def = createDefaultAccount()
 check('default guilds', summary(def) === 'TYMF/Horde:Trollwarrior,Pakawakajaka | South Bank Satellites/Alliance:Bassor', summary(def))
 check('characters come from guilds', def.characters.length === 3 && def.characters[2].characterName === 'Bassor')
 const json = JSON.parse(JSON.stringify(def))
-check('save nests characters in guilds', json.saveVersion === 4 && !('characters' in json) && json.guilds.every((g) => g.id && g.faction && Array.isArray(g.characters)) && typeof json.id === 'string')
+check('save nests characters in guilds', json.saveVersion === SAVE_VERSION && !('characters' in json) && json.guilds.every((g) => g.id && g.faction && Array.isArray(g.characters)) && typeof json.id === 'string')
 const back = Account.fromJSON(json)
 check('round-trip keeps guilds', summary(back) === summary(def) && back.guilds.every((g, i) => g.id === def.guilds[i].id) && back.id === def.id)
 check('guildOf', def.guildOf(def.characters[2].id).guildName === 'South Bank Satellites')

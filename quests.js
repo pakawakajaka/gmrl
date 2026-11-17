@@ -3,6 +3,7 @@
 import { CLASS_BITS, DUNGEONS, DUNGEON_QUESTS, QUESTS, RACE_BITS, ZONE_QUESTS, getQuest, questRewardsFor } from './gear.js'
 import { fightAgainst, questXp, respawnWait } from './combat.js'
 import { talentKey } from './talents.js'
+import { groundSpeed } from './spells.js'
 import { grindValue, killValue, pickGrindTarget, rewardGain, worth } from './value.js'
 import { ZONES, grayLevel, zoneLockReason } from './zones.js'
 
@@ -11,12 +12,14 @@ export const WORKING_QUESTS = 5
 // Quests held at once, zone and dungeon quests alike. Zone quests are picked up when the character starts
 // working on them and kept until turned in, also after it moves on; dungeon quests on pickup trips.
 export const QUEST_LOG_SIZE = 30
-// Travel and talking for each quest.
-export const QUEST_SECONDS = 300
+// Each quest: getting around the zone for it (faster mounted, see groundSpeed), and talking.
+const QUEST_GROUND_SECONDS = 240
+const QUEST_TALK_SECONDS = 60
+export const questSeconds = (character) => QUEST_TALK_SECONDS + QUEST_GROUND_SECONDS / groundSpeed(character)
 // Each objective step that isn't a mob: an object to use or loot, an item to pick up, a spell to cast on something.
 export const STEP_SECONDS = 30
 
-export const turnInSeconds = (questId) => QUEST_SECONDS + STEP_SECONDS * (QUESTS[questId].steps ?? 0)
+export const turnInSeconds = (character, questId) => questSeconds(character) + STEP_SECONDS * (QUESTS[questId].steps ?? 0)
 
 // A quest's tracked objectives: [{ id, count, name?, sources: [mob entry], chances?: Map(entry -> %) }].
 // Kill objectives are credited by any of their sources; item objectives drop from them at a chance.
@@ -79,7 +82,7 @@ function isAvailable(character, id, done, doneGroups) {
 export function questPlan(character, questId, w = worth(character)) {
   const quest = getQuest(questId)
   const counts = questProgress(character, questId)
-  let seconds = turnInSeconds(questId)
+  let seconds = turnInSeconds(character, questId)
   let wait = 0
   let value = rewardWorth(character, quest, w)
   for (const [i, o] of objectivesOf(questId).entries()) {
@@ -183,10 +186,10 @@ export function makeRoom(character, keep) {
 // Quest ids the character works on in the zone: up to WORKING_QUESTS of the quests it can do there that are
 // worth more than grinding the zone, most worth per hour first, those waiting on rare spawns last. Ones it
 // doesn't hold need room in its log (logRoom; the zone's own quests are kept). Recomputed when level,
-// gear, talents, quests or the wanted item change.
+// gear, talents, quests, mount or the wanted item change.
 const activeCache = new WeakMap()
 export function activeQuests(character, zoneName) {
-  const key = `${character.characterLevel}|${character.characterSpec}|${character.characterRole}|${Object.values(character.equipment).join()}|${character.questsDone.length}|${talentKey(character)}|${questLogIds(character).join()}|${character.wanted}`
+  const key = `${character.characterLevel}|${character.characterSpec}|${character.characterRole}|${Object.values(character.equipment).join()}|${character.questsDone.length}|${talentKey(character)}|${questLogIds(character).join()}|${character.wanted}|${character.mount}`
   let cached = activeCache.get(character)
   if (cached?.key !== key) activeCache.set(character, (cached = { key, zones: new Map() }))
   if (cached.zones.has(zoneName)) return cached.zones.get(zoneName)
@@ -267,7 +270,7 @@ export function zoneQuestOffers(character) {
 export function nextAction(character, zoneName, random = Math.random) {
   const active = activeQuests(character, zoneName)
   for (const questId of active) {
-    if (isComplete(character, questId)) return { questId, seconds: turnInSeconds(questId) }
+    if (isComplete(character, questId)) return { questId, seconds: turnInSeconds(character, questId) }
   }
   let rare
   let action

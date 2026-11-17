@@ -2,8 +2,9 @@
 import { CLASSES, classIcon } from './data.js'
 import { el, formatDuration, formatNumber, money } from './dom.js'
 import { DUNGEON_QUESTS, QUALITIES, getItem } from './gear.js'
-import { DUNGEONS, GROUP_SIZE, dungeonQuestIds, getDungeon, isQueuedFor } from './dungeons.js'
+import { DUNGEONS, GROUP_SIZE, RUN_METER_SIZE, dungeonQuestIds, getDungeon, isQueuedFor } from './dungeons.js'
 import { renderTooltip } from './character-sheet.js'
+import { earnedBadges } from './badges.js'
 
 const FACTIONS = ['Alliance', 'Horde']
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`
@@ -77,6 +78,7 @@ function renderRunRow(run) {
           `${run.bosses} of ${getDungeon(run.dungeon).bosses.length} bosses`,
           plural(questCount(run), 'quest'),
           needs && plural(needs, 'upgrade'),
+          run.meters?.deaths.length && plural(run.meters.deaths.length, 'death'),
         ].filter(Boolean).join(' · ')),
       ),
       el('span', { class: 'encounter-when' }, ago(run.at)),
@@ -96,6 +98,7 @@ function renderMissing() {
 
 function renderRun(run, account) {
   const dungeon = getDungeon(run.dungeon)
+  const badges = earnedBadges('dungeon', run)
   const summary = run.success
     ? `The ${run.faction} group killed all ${dungeon.bosses.length} bosses and ${formatNumber(run.trash)} other mobs, then turned in ${plural(questCount(run), 'quest')}.`
     : `The group was too weak for ${run.dungeon}: it killed ${run.bosses} of ${dungeon.bosses.length} bosses and ${formatNumber(run.trash)} other mobs before wiping${run.wipedOn ? ` on ${run.wipedOn}` : ''}. No quest credit. They won't queue again on their own until they level or pick up more quests.`
@@ -111,7 +114,7 @@ function renderRun(run, account) {
     el('div', { class: 'encounter-sides' },
       el('section', { 'aria-label': 'Group' },
         el('h3', {}, 'Group'),
-        el('ul', { class: 'encounter-members' }, run.members.map((m, i) => renderMember(run, m, i, account))),
+        el('ul', { class: 'encounter-members' }, run.members.map((m, i) => renderMember(run, m, i, account, badges.filter((b) => b.to.includes(i))))),
       ),
       el('section', { 'aria-label': 'Loot' },
         el('h3', {}, 'Loot'),
@@ -127,10 +130,50 @@ function renderRun(run, account) {
           : el('p', { class: 'empty' }, 'Nothing of note dropped.'),
       ),
     ),
+    run.meters
+      ? renderMeters(run)
+      : el('p', { class: 'note' }, `Meters are kept for the last ${RUN_METER_SIZE} runs.`),
   )
 }
 
-function renderMember(run, m, index, account) {
+// Damage, healing and damage taken, like a Warcraft Logs meter: each member's bar against the top one, with
+// the amount and per second of fighting. Then who died to what.
+function renderMeters(run) {
+  const { meters } = run
+  const board = (title, key, perSecond) => {
+    const rows = run.members.map((m, i) => ({ m, amount: meters[key][i] })).filter((r) => r.amount > 0).sort((a, b) => b.amount - a.amount)
+    if (!rows.length) return null
+    const top = rows[0].amount
+    const total = rows.reduce((n, r) => n + r.amount, 0)
+    return el('section', { class: 'dungeon-meter', 'aria-label': title },
+      el('h4', {}, title, el('span', { class: 'encounter-meta' }, `${formatNumber(total)} · ${formatNumber(Math.round(total / meters.combat))} ${perSecond}`)),
+      el('div', { class: 'stat-bars' }, rows.map(({ m, amount }) =>
+        el('div', { class: 'stat-bar', style: { '--class-color': CLASSES[m.class].color } },
+          el('span', { class: 'stat-label actor' }, m.name),
+          el('span', { class: `meter-bar ${key === 'healing' ? 'meter-heal' : 'meter-class'}`, 'aria-hidden': 'true' },
+            el('span', { style: { width: `${((100 * amount) / top).toFixed(1)}%` } })),
+          el('span', { class: 'stat-value' }, `${formatNumber(amount)} · ${formatNumber(Math.round(amount / meters.combat))} ${perSecond}`),
+        ))),
+    )
+  }
+  const died = (m) => el('span', { class: 'actor', style: { '--class-color': CLASSES[m.class].color } }, m.name)
+  return el('section', { class: 'dungeon-meters', 'aria-labelledby': 'meters-title' },
+    el('h3', { id: 'meters-title' }, 'Meters', el('span', { class: 'encounter-meta' }, ` ${runLength(meters.combat)} in combat`)),
+    el('div', { class: 'dungeon-meter-boards' },
+      board('Damage done', 'damage', 'DPS'),
+      board('Healing done', 'healing', 'HPS'),
+      board('Damage taken', 'taken', 'DTPS'),
+      el('section', { class: 'dungeon-meter', 'aria-label': 'Deaths' },
+        el('h4', {}, 'Deaths', el('span', { class: 'encounter-meta' }, formatNumber(meters.deaths.length))),
+        meters.deaths.length
+          ? el('ul', { class: 'death-log' }, meters.deaths.map((d) => el('li', {}, died(run.members[d.to]), ` killed by ${d.by}`)))
+          : el('p', { class: 'empty' }, 'Nobody died.'),
+      ),
+    ),
+  )
+}
+
+function renderMember(run, m, index, account, badges) {
   const name = account.getCharacter(m.id) ? el('a', { href: `#/character/${m.id}` }, m.name) : m.name
   const won = run.loot.filter((l) => l.to === index)
   const gains = [m.xp > 0 && `${formatNumber(m.xp)} XP`, won.length && plural(won.length, 'item')].filter(Boolean)
@@ -141,6 +184,7 @@ function renderMember(run, m, index, account) {
       el('p', { class: 'encounter-meta' }, `${m.level} ${m.race} ${m.spec} ${m.class} · ${m.role}`),
       el('p', { class: 'encounter-meta' }, gains.join(' · '), gains.length ? ' · ' : '', money(m.copper)),
       m.quests.length > 0 && el('p', { class: 'encounter-meta' }, `Turned in: ${m.quests.map((id) => DUNGEON_QUESTS[id].title).join(', ')}`),
+      badges.length > 0 && el('div', { class: 'badges' }, badges.map((b) => el('span', { class: `badge badge-${b.key}`, title: b.title }, b.label))),
     ),
   )
 }
