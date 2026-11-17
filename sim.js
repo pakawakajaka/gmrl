@@ -839,8 +839,10 @@ function fighter(kit, foe, v) {
     const c = costOf(s)
     if (s.power === 'rage') rage -= c
     else if (s.power === 'energy') energy -= c
-    else if (s.power === 'health') hp -= c
-    else if (c > 0) {
+    else if (s.power === 'health') {
+      hp -= c
+      v.log?.({ t, kind: 'cast', from: self, to: self, ability: s.name, amount: c, extra: 0, hp })
+    } else if (c > 0) {
       mana -= c
       lastSpend = t + (s.cast ?? 0) / 1000
     }

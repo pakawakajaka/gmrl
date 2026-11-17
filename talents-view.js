@@ -6,6 +6,18 @@ import { specOptions } from './gear.js'
 import { POINTS_PER_ROW, canLearn, canUnlearn, defaultBuild, pointsSpent, talentPoints, talentSupport } from './talents.js'
 
 const ICON_URL = 'https://wow.zamimg.com/images/wow/icons/large/'
+// Each talent tree's icon in Classic (TalentTab.dbc), by class and spec.
+const SPEC_ICONS = {
+  Warrior: { Arms: 'ability_rogue_eviscerate', Fury: 'ability_warrior_innerrage', Protection: 'inv_shield_06' },
+  Paladin: { Holy: 'spell_holy_holybolt', Protection: 'spell_holy_devotionaura', Retribution: 'spell_holy_auraoflight' },
+  Hunter: { 'Beast Mastery': 'ability_hunter_beasttaming', Marksmanship: 'ability_marksmanship', Survival: 'ability_hunter_swiftstrike' },
+  Rogue: { Assassination: 'ability_rogue_eviscerate', Combat: 'ability_backstab', Subtlety: 'ability_stealth' },
+  Priest: { Discipline: 'spell_holy_wordfortitude', Holy: 'spell_holy_holybolt', Shadow: 'spell_shadow_shadowwordpain' },
+  Shaman: { Elemental: 'spell_nature_lightning', Enhancement: 'spell_nature_lightningshield', Restoration: 'spell_nature_magicimmunity' },
+  Mage: { Arcane: 'spell_holy_magicalsentry', Fire: 'spell_fire_firebolt02', Frost: 'spell_frost_frostbolt02' },
+  Warlock: { Affliction: 'spell_shadow_deathcoil', Demonology: 'spell_shadow_metamorphosis', Destruction: 'spell_shadow_rainoffire' },
+  Druid: { Balance: 'spell_nature_starfall', 'Feral Combat': 'ability_racial_bearform', Restoration: 'spell_nature_healingtouch' },
+}
 const SUPPORT = {
   full: 'Simulated in fights.',
   partial: 'Partly simulated in fights.',
@@ -28,12 +40,25 @@ export function renderTalentTile(character) {
   const total = talentPoints(character.characterLevel)
   const unspent = total - pointsSpent(character.talents)
   const href = `#/character/${character.id}/talents`
+  const spec = character.characterSpec
+  const icon = SPEC_ICONS[character.characterClass]?.[spec]
+  const badge = el('span', { class: 'spec-icon', 'aria-hidden': 'true' }, el('span', { class: 'icon-fallback' }, spec.charAt(0)))
+  if (icon) {
+    const img = el('img', { src: `${ICON_URL}${icon}.jpg`, alt: '', width: 40, height: 40, onerror: () => img.remove() })
+    badge.append(img)
+  }
   return el('section', { class: 'sheet-panel talent-tile', 'aria-labelledby': 'talent-tile-title' },
     el('h3', { id: 'talent-tile-title' }, 'Talents'),
-    total
-      ? el('p', {}, `${treePoints(character).join(' / ')} · ${followsDefault(character) ? `${character.characterSpec} default build` : 'Custom build'}${unspent ? ` · ${unspent} unspent` : ''}`)
-      : el('p', { class: 'empty' }, 'Talent points start at level 10.'),
-    el('a', { class: 'button small', href }, 'Open talents'),
+    el('div', { class: 'talent-tile-body' },
+      badge,
+      el('div', {},
+        el('p', { class: 'talent-tile-spec' }, spec),
+        total
+          ? el('p', {}, `${treePoints(character).join(' / ')} · ${followsDefault(character) ? `${spec} default build` : 'Custom build'}${unspent ? ` · ${unspent} unspent` : ''}`)
+          : el('p', { class: 'empty' }, 'Talent points start at level 10.'),
+      ),
+      el('a', { class: 'button small', href }, 'Open talents'),
+    ),
   )
 }
 

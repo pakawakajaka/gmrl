@@ -11,6 +11,7 @@ const D = await import(root + 'dungeons.js')
 const { zoneValue } = await import(root + 'leveling.js')
 const { renderDungeons } = await import(root + 'dungeons-view.js')
 const { renderCharacterSheet } = await import(root + 'character-sheet.js')
+const V = await import(root + 'value.js')
 let fails = 0
 const check = (label, ok, extra = '') => { console.log(`${ok ? 'PASS' : 'FAIL'} ${label} ${extra}`); if (!ok) fails++ }
 const seeded = (seed) => () => {
@@ -42,15 +43,16 @@ check('RFK open at 30', D.dungeonLockReason(orc, D.getDungeon('Razorfen Kraul'))
 check('RFC open but out of range at 30', !D.inRange(orc, D.getDungeon('Ragefire Chasm')))
 check('manual queue refused when locked', !D.joinQueue(orc, 'The Stockade', start) && !orc.dungeonQueue)
 
-// Errands: pickups go to dungeonQuests, not the 5-quest log; chain steps count as done.
+// Errands: pickups go to dungeonQuests, which share the 30-quest log with zone quests; chain steps count as done.
 const runner = make(HORDE[2], 20, 'The Barrens')
 const errand = runner.plannedAction
 check('errand planned first', errand?.errand && errand.seconds > 0, JSON.stringify(errand?.errand))
 Math.random = seeded(1)
 const farmed = runner.farm(6, start)
-check('picked up dungeon quests', runner.dungeonQuests.length > 5, `${runner.dungeonQuests.length} held`)
+check('picked up dungeon quests', new Set(farmed.errands.flatMap((e) => e.quests)).size >= 5, `${runner.dungeonQuests.length} held`)
 check('errands reported', farmed.errands.length > 0 && farmed.errands.every((e) => Array.isArray(e.quests)))
-check('quest log still capped at 5', Object.keys(runner.questLog).length <= 5)
+check('quest log capped at 30, dungeon quests included', Object.keys(runner.questLog).length + runner.dungeonQuests.length <= 30,
+  `${Object.keys(runner.questLog).length}+${runner.dungeonQuests.length}`)
 check('nothing left to pick up after a while', D.pendingQuests(runner).size === 0 || runner.plannedAction?.errand === undefined || true)
 check('held quests are real dungeon quests', runner.dungeonQuests.every((id) => D.isDungeonQuest(id)))
 
@@ -182,6 +184,11 @@ if (goodRun) {
   const sheet = renderCharacterSheet({ character: c, onDelete() {}, onQueue: (name) => { queued = name }, onLeaveQueue: () => { left = true } })
   const panel = sheet.querySelector('.sheet-dungeons')
   check('sheet has a dungeons panel', !!panel)
+  const quests = sheet.querySelector('[aria-label="Quests"]')
+  const questHeads = [...quests.querySelectorAll('h3')].map((h) => h.textContent)
+  const held = Object.keys(c.questLog).length + c.dungeonQuests.length
+  check('quest panel lists the whole log', questHeads.includes(`Quest Log (${held}/30)`) && (held === 0 || quests.querySelectorAll('.quest-log > li').length === held), questHeads.join())
+  check('quest panel lists best rewards, not zones', questHeads.includes('Best Rewards') && !questHeads.includes('Where to Farm') && quests.querySelectorAll('.focus-list > li').length <= 10)
   const button = [...panel.querySelectorAll('.dungeon-picks button')][0]
   button?.click()
   check('Queue button calls onQueue', typeof queued === 'string' && D.getDungeon(queued))
@@ -190,6 +197,22 @@ if (goodRun) {
   const sheet2 = renderCharacterSheet({ character: c, onDelete() {}, onQueue() {}, onLeaveQueue: () => { left = true } })
   sheet2.querySelector('[data-focus-key="leave-queue"]').click()
   check('Leave button calls onLeaveQueue', left)
+  const focus = sheet2.querySelector('.sheet-focus')
+  const heads = [...focus.querySelectorAll('h4')].map((h) => h.textContent)
+  check('focus: quests, zones and dungeons', ['Quests', 'Zone drops', 'Dungeons'].every((h) => heads.includes(h)) && focus.querySelectorAll('.focus-scroll').length >= 2, heads.join('; '))
+  const zoneCard = focus.querySelector('.focus-dungeon')
+  check('focus: its zone first', zoneCard?.querySelector('.quest-title').textContent === c.zone && /Here/.test(zoneCard.textContent))
+  const card = [...focus.querySelectorAll('.focus-dungeon')].find((li) => /Queued/.test(li.textContent))
+  check('focus: the queued dungeon', card?.querySelector('.quest-title').textContent === queued)
+  const targets = [...card.querySelectorAll('.focus-drops > li')]
+  check('focus: dungeon upgrades with tooltip, chance and boss', targets.length > 0 && targets.every((li) => li.querySelector('.tooltip') && /power · .*run.* · \S/.test(li.getAttribute('aria-label'))), targets.map((li) => li.getAttribute('aria-label')).join('; '))
+  const dungeon = D.getDungeon(queued)
+  const kills = [...dungeon.bosses.map((entry) => [entry, 1]), ...dungeon.trash.map(([entry, count]) => [entry, count * 0.6])]
+  const loot = V.lootTargets(c, kills, 0.5)
+  const sum = loot.reduce((s, t) => s + t.worth, 0)
+  check('lootTargets add up to runGear', Math.abs(sum - V.runGear(c, kills, 0.5)) < 1e-9 * Math.max(1, sum), `${sum}`)
+  check('lootTargets most worth first', loot.every((t, i) => !i || loot[i - 1].worth >= t.worth))
+  check('dungeonLoot is lootTargets of a clear', JSON.stringify(D.dungeonLoot(c, dungeon)) === JSON.stringify(loot))
   acc.leaveDungeonQueue(c.id, acc.lastTick)
   check('account leaveDungeonQueue', c.dungeonQueue === null && c.queueDeclined)
 }
@@ -206,6 +229,24 @@ check('wipe recorded', !wipe.record.success && wipe.record.bosses < brd.bosses.l
 check('wipe: no quest credit', weak.every((c) => c.dungeonQuests.length === held.length) && wipe.record.members.every((m) => m.quests.length === 0))
 check('wipe: no clear, declined', weak.every((c) => !c.dungeonClears[brd.name] && c.queueDeclined))
 check('wipe: still costs time', weak.every((c) => c.timeBank < 0))
+
+const idleFocus = renderCharacterSheet({ character: make(HORDE[0], 10), onDelete() {} }).querySelector('.sheet-focus')
+check('focus: idle farms for nothing', idleFocus.textContent.includes('Nothing while idle.'))
+const grind = V.grindTargets(make(HORDE[0], 12, 'Durotar'), 'Durotar')
+check('grindTargets: upgrades from the zone, chance per hour', grind.length > 0 && grind.every((t) => t.power > 0 && t.chance > 0 && t.chance < 1 && t.worth <= t.power * t.chance * (1 + 1e-9)))
+{
+  const hunter = make(HORDE[5], 60, 'Winterspring') // naked: most drops are upgrades
+  const plan = V.grindPlan(hunter, 'Winterspring')
+  const { grindPool } = await import(root + 'combat.js')
+  const all = new Set(grindPool(hunter, 'Winterspring').weighted.map((m) => m.fight.entry))
+  const hunted = new Set(plan.weighted.map((m) => m.fight.entry))
+  const picks = Array.from({ length: 100 }, (_, i) => V.pickGrindTarget(hunter, 'Winterspring', seeded(i)))
+  check('grindPlan: hunts some or all of the beatable mobs, kills capped by respawns', plan.total > 0 && [...hunted].every((e) => all.has(e)) && plan.kills > 0 && plan.kills <= (3600 / 300) * plan.total + 1e-9 && plan.targeted === hunted.size < all.size)
+  check('grindPlan: grinding picks only hunted mobs, searching included', picks.every((p) => hunted.has(p.fight.entry) && p.seconds === p.fight.seconds + plan.extra) && plan.extra >= 0)
+  check('farm status names hunted mobs', plan.targeted ? hunter.farmStatus.startsWith('Farming in Winterspring: ') : hunter.farmStatus === 'Farming in Winterspring', `${hunter.farmStatus} (${hunted.size}/${all.size})`)
+  const card = [...renderCharacterSheet({ character: hunter, onDelete() {} }).querySelectorAll('.sheet-focus .focus-dungeon')][0]
+  check('focus: own zone card names hunted mobs', plan.targeted === card.textContent.includes('Hunting: '))
+}
 
 console.log(fails ? `${fails} FAILED` : 'ALL PASS')
 process.exit(fails ? 1 : 0)

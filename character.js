@@ -3,10 +3,11 @@ import { getZone } from './zones.js'
 import { averageItemLevel, characterPower } from './power.js'
 import { SLOTS, bestLoadout, getItem, getQuest, itemKey, levelToUse, offSpecGear, questRewardsFor, rollMobLoot, specOptions } from './gear.js'
 import { farmRates, questXp } from './combat.js'
-import { activeQuests, creditKill, nextAction, objectivesOf } from './quests.js'
+import { activeQuests, creditKill, nextAction, objectivesOf, pickUpQuests, tidyQuestLog, workable } from './quests.js'
 import { isClassSpell, startingSpells, trainSpells } from './spells.js'
 import { autoSpend, learnTalent, sanitizeTalents, talentPoints, unlearnTalent } from './talents.js'
 import { nextZone } from './leveling.js'
+import { grindPlan, huntedMobs } from './value.js'
 import { canHold, getDungeon, dungeonLockReason, nextErrand, runErrand } from './dungeons.js'
 import { MAX_RANK, maxRpAtLevel, rankOf, rankTitle } from './honor.js'
 import { RESET_DAYS } from './reset.js'
@@ -15,6 +16,7 @@ const lookup = (table, key) => (Object.hasOwn(table, key) ? table[key] : undefin
 const BAG_SIZE = 16
 const LOG_SIZE = 20
 const MIN_TIME_BANK = -12 * 3600 // owed after a long dungeon run
+const HUNTED_NAMES = 3 // mob names in farmStatus
 
 export default class Character {
   #planned = null // the next action in the current zone, kept until there's time to do it
@@ -36,7 +38,7 @@ export default class Character {
     this.equipment = equipment // { slot: itemId }
     this.bag = bag // item ids: the best gear for the character's other specs, then gear kept until it's high enough level
     this.questsDone = questsDone // quest ids
-    this.questLog = questLog // { questId: [count per objective] } for quests with progress
+    this.questLog = questLog // { questId: [count per objective] } for the zone quests held; see quests.js
     this.timeBank = timeBank // farmed seconds not yet spent on a kill or quest; below zero after world PvP
     this.lootLog = lootLog // newest first: { item, source, at, equipped, quest? }
     this.honorableKills = honorableKills // players killed for honor
@@ -51,7 +53,7 @@ export default class Character {
     this.pvpLog = pvpLog // newest first: see worldPvp in pvp.js
     this.pvpReadyAt = pvpReadyAt // ms time until which the character neither spots nor is spotted
     this.hearthReadyAt = hearthReadyAt // ms time the Hearthstone is back
-    this.dungeonQuests = dungeonQuests // dungeon quest ids picked up and not yet turned in; see dungeons.js
+    this.dungeonQuests = dungeonQuests // dungeon quest ids picked up and not yet turned in; they share the quest log
     this.dungeonQueue = dungeonQueue // { dungeon, since (ms), manual } while waiting for a group, else null
     this.dungeonClears = dungeonClears // { dungeon name: successful runs }
     this.queueDeclined = queueDeclined // { level, quests } when last taken out of the queue by hand
@@ -70,10 +72,19 @@ export default class Character {
     return averageItemLevel(this)
   }
 
-  // Hourly grinding rates in the current zone (see farmRates), or undefined when idle.
+  // Hourly grinding rates in the current zone (see farmRates and grindPlan), or undefined when idle.
   get rates() {
     const zone = getZone(this.zone)
-    return zone ? farmRates(this, zone) : undefined
+    return zone ? farmRates(this, zone, grindPlan(this, zone.name)) : undefined
+  }
+
+  // E.g. "Farming in Winterspring: Frostsaber Stalker, Winterfall Ursa", naming the mobs it grinds when it
+  // hunts only some (see grindPlan).
+  get farmStatus() {
+    if (!this.zone) return 'Idle'
+    const hunted = getZone(this.zone) ? huntedMobs(this, this.zone) : []
+    const names = hunted.length > HUNTED_NAMES ? [...hunted.slice(0, HUNTED_NAMES - 1), `${hunted.length - HUNTED_NAMES + 1} more`] : hunted
+    return `Farming in ${this.zone}${names.length ? `: ${names.join(', ')}` : ''}`
   }
 
   get xpPerHour() {
@@ -130,6 +141,7 @@ export default class Character {
       this.timeBank -= move.seconds
     }
     for (;;) {
+      pickUpQuests(this, this.zone)
       const action = this.plannedAction
       if (!action) {
         const move = nextZone(this, 'stuck') // nothing here the character can beat
@@ -140,7 +152,7 @@ export default class Character {
         this.timeBank = 0
         break
       }
-      const seconds = action.fight ? action.fight.seconds : action.seconds
+      const seconds = action.seconds ?? action.fight.seconds
       if (seconds > this.timeBank) break
       this.timeBank -= seconds
       this.#planned = null
@@ -177,10 +189,11 @@ export default class Character {
       const worn = Object.values(this.equipment).join()
       if (found.length || gained) this.equipBest(found.map((a) => a.item))
       const upgraded = worn !== Object.values(this.equipment).join()
+      if (gained || upgraded) tidyQuestLog(this)
       acquired.push(...found)
       this.copper += earned
       trainSpells(this)
-      const ranOut = !action.fight && !action.errand && !activeQuests(this, this.zone).length
+      const ranOut = !action.fight && !action.errand && !activeQuests(this, this.zone).some((id) => workable(this, id))
       const reason = gained ? 'level' : ranOut ? 'quests' : upgraded && this.characterLevel >= MAX_LEVEL ? 'gear' : undefined
       const move = reason && nextZone(this, reason)
       if (move) travel(move)
@@ -211,6 +224,7 @@ export default class Character {
     this.equipBest(acquired.filter((a) => a.quest).map((a) => a.item))
     this.copper += copper + questCopper
     trainSpells(this)
+    tidyQuestLog(this)
     const upgrades = [...new Set(Object.values(this.equipment))].filter((id) => !wornBefore.has(id))
     this.#log(acquired, upgrades, now)
     this.#planned = null
@@ -386,6 +400,7 @@ export default class Character {
     this.equipment = {}
     this.bag = []
     this.equipBest([...ids(equipped), ...ids(data.bag)])
+    tidyQuestLog(this)
   }
 
   get faction() {

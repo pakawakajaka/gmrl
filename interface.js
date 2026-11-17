@@ -47,6 +47,8 @@ function render() {
   const { view, id, sub } = currentView()
   const character = view === 'character' ? account.getCharacter(id) : undefined
   const focusKey = document.activeElement?.dataset?.focusKey
+  // Scrolled lists keep their place over a re-render.
+  const scrolled = new Map([...app.querySelectorAll('[data-scroll-key]')].map((e) => [e.dataset.scrollKey, e.scrollTop]))
 
   document.getElementById('accountName').textContent = account.accountName
 
@@ -110,6 +112,7 @@ function render() {
   const refocus = focusKey && [...app.querySelectorAll('[data-focus-key]')].find((e) => e.dataset.focusKey === focusKey)
   if (refocus) refocus.focus()
   else app.querySelector('[data-autofocus]')?.focus()
+  for (const e of app.querySelectorAll('[data-scroll-key]')) if (scrolled.has(e.dataset.scrollKey)) e.scrollTop = scrolled.get(e.dataset.scrollKey)
 }
 
 // Each guild's gold, whole gold only, in its faction's color. There is no account-wide total.

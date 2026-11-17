@@ -1,14 +1,16 @@
-import { el, formatChance, formatDuration, formatNumber, money } from './dom.js'
-import { CLASS_BITS, INVENTORY_TYPES, QUALITIES, QUEST_ITEMS, RACE_BITS, SLOTS, getItem, getQuest, itemTypeName, offSpecGear } from './gear.js'
+import { badge, el, formatChance, formatDuration, formatNumber, money } from './dom.js'
+import { CLASS_BITS, DUNGEON_QUESTS, INVENTORY_TYPES, QUALITIES, QUEST_ITEMS, RACE_BITS, SLOTS, getItem, getQuest, itemTypeName, offSpecGear, questRewardsFor } from './gear.js'
 import { SCHOOLS, STAT_NAMES, characterStats } from './stats.js'
-import { drinkFor, foodFor, getMob } from './combat.js'
-import { objectivesOf, questProgress } from './quests.js'
+import { drinkFor, foodFor, getMob, respawnWait } from './combat.js'
+import { QUEST_LOG_SIZE, activeQuests, objectivesOf, questKills, questLogIds, questPlan, questProgress, questZone, rewardWorth, zoneQuestOffers } from './quests.js'
 import { mountOf } from './pvp.js'
 import { getSpell, knownAbilities } from './spells.js'
 import { renderTalentTile } from './talents-view.js'
-import { LEAVE_START_LEVEL, zoneOptions } from './leveling.js'
+import { talentKey } from './talents.js'
+import { zoneOptions } from './leveling.js'
 import { MAX_LEVEL } from './data.js'
-import { DUNGEONS, dungeonLockReason, errandTrips, heldQuests, inRange, isQueuedFor } from './dungeons.js'
+import { DUNGEONS, autoDungeons, dungeonLockReason, dungeonLoot, dungeonValue, errandTrips, getDungeon, heldQuests, inRange, isQueuedFor, pendingQuests } from './dungeons.js'
+import { grindTargets, grindValue, huntedMobs, itemGain, lootTargets, rewardGain, worth } from './value.js'
 import { MAX_RANK, MIN_HONOR_KILLS, rankRange, rankTitle } from './honor.js'
 import { RESET_DAYS, dayOf, periodOf, periodStart } from './reset.js'
 
@@ -32,6 +34,7 @@ export function renderCharacterSheet({ character, onDelete, onQueue, onLeaveQueu
       el('div', {},
         el('h2', { id: 'view-title' }, character.characterName),
         el('p', { class: 'sheet-subtitle' }, `Level ${character.characterLevel} ${character.characterRace} ${character.characterSpec} ${character.characterClass}`),
+        el('p', { class: 'sheet-subtitle sheet-status' }, character.farmStatus),
       ),
       el('div', { class: 'sheet-actions' },
         el('a', { class: 'button small', href: '#/roster' }, 'Back to roster'),
@@ -41,15 +44,20 @@ export function renderCharacterSheet({ character, onDelete, onQueue, onLeaveQueu
     el('div', { class: 'sheet-layout' },
       el('div', { class: 'sheet-column' },
         renderPaperDoll(character),
-        renderTalentTile(character),
         renderPvp(character),
       ),
-      renderStats(character, stats),
-    ),
-    el('div', { class: 'sheet-layout' },
-      renderProgress(character),
       el('div', { class: 'sheet-stack' },
+        renderTalentTile(character),
+        renderStats(character, stats),
+      ),
+    ),
+    renderFocus(character),
+    el('div', { class: 'sheet-layout' },
+      el('div', { class: 'sheet-stack' },
+        renderProgress(character),
         renderDungeons(character, onQueue, onLeaveQueue),
+      ),
+      el('div', { class: 'sheet-stack' },
         renderBag(character),
         renderLoot(character),
       ),
@@ -76,7 +84,6 @@ function renderPaperDoll(character) {
     el('ul', { class: 'slot-column left' }, LEFT.map((s) => slot(s, 'left'))),
     el('div', { class: 'doll-center' },
       el('img', { class: 'class-icon', src: character.classIcon, alt: '', width: 72, height: 72 }),
-      el('p', {}, character.zone ? `Farming in ${character.zone}` : 'Idle'),
     ),
     el('ul', { class: 'slot-column right' }, RIGHT.map((s) => slot(s, 'right'))),
     el('ul', { class: 'slot-row' }, BOTTOM.map((s) => slot(s, 'bottom'))),
@@ -231,48 +238,277 @@ function objectiveName(o) {
   return (getMob(o.id) ?? getMob(o.sources[0]))?.name ?? 'Kills'
 }
 
+// Every quest the character holds: the ones it's working on in its zone first, then other zone quests, then
+// dungeon quests.
 function renderQuestLog(character) {
-  const ids = character.activeQuests
-  if (!ids.length) return el('p', { class: 'empty' }, `No quests in ${character.zone} worth more than grinding at this level.`)
-  return el('ul', { class: 'quest-log' }, ids.map((id) => {
+  const ids = questLogIds(character)
+  if (!ids.length) return el('p', { class: 'empty' }, 'No quests yet.')
+  const working = new Set(character.activeQuests)
+  const rank = (id) => (working.has(id) ? 0 : DUNGEON_QUESTS[id] ? 2 : 1)
+  const where = (id) => (DUNGEON_QUESTS[id] ? DUNGEON_QUESTS[id].dungeon : questZone(id) ?? '')
+  const sorted = [...ids].sort((a, b) => rank(a) - rank(b) || where(a).localeCompare(where(b)) || getQuest(a).level - getQuest(b).level)
+  return el('ul', { class: 'quest-log focus-scroll', 'data-scroll-key': 'quest-log', onmouseover: placeTooltip, onfocusin: placeTooltip }, sorted.map((id) => {
     const quest = getQuest(id)
-    const counts = questProgress(character, id)
-    const objectives = objectivesOf(id)
+    const objectives = DUNGEON_QUESTS[id] ? [] : objectivesOf(id)
+    const counts = objectives.length ? questProgress(character, id) : []
     return el('li', {},
-      el('span', { class: 'quest-title' }, `[${quest.level}] ${quest.title}`),
-      objectives.length
-        ? el('ul', { class: 'quest-objectives' }, objectives.map((o, i) =>
-          el('li', { class: counts[i] >= o.count ? 'done' : null }, `${objectiveName(o)}: ${counts[i]}/${o.count}`)))
-        : el('span', { class: 'quest-objectives' }, quest.steps ? ` (errand, ${quest.steps} pickups)` : ' (errand)'),
+      el('span', { class: 'quest-title' }, `[${quest.level}] ${quest.title}`), ' ',
+      working.has(id) && badge('Working on'),
+      el('span', { class: 'loot-source' }, DUNGEON_QUESTS[id] ? `Dungeon: ${where(id)}` : where(id)),
+      objectives.length > 0 && el('ul', { class: 'quest-objectives' }, objectives.map((o, i) =>
+        el('li', { class: counts[i] >= o.count ? 'done' : null }, `${objectiveName(o)}: ${counts[i]}/${o.count}`))),
+      renderQuestRewards(character, [quest]),
     )
   }))
 }
 
-const ZONE_CHOICES = 5
+const QUEST_OFFERS = 10
 
-// The zones the character weighs, most worth first. Below max level worth is XP, with gear it would wear
-// counted as XP; at max level it's power gained from gear.
-function renderZoneChoice(character) {
-  const options = zoneOptions(character).slice(0, ZONE_CHOICES)
+// Quests the character could pick up now, the most worth on turn-in first: zone quests in zones open to
+// it and dungeon quests for dungeons in its level range. Kept until what they depend on changes.
+const offerCache = new WeakMap()
+function questOffers(character) {
+  const key = `${character.characterLevel}|${character.characterSpec}|${character.characterRole}|${Object.values(character.equipment).join()}|${talentKey(character)}|${character.questsDone.length}|${questLogIds(character).join()}`
+  const cached = offerCache.get(character)
+  if (cached?.key === key) return cached.offers
+  const dungeon = [...pendingQuests(character)].flatMap(([zone, ids]) => ids.map((id) => ({
+    id, worth: rewardWorth(character, DUNGEON_QUESTS[id]), zone: `${DUNGEON_QUESTS[id].dungeon} (from ${zone ?? 'a city'})`,
+  })))
+  const least = character.characterLevel >= MAX_LEVEL ? 0.05 : 0.5 // shows as at least 0.1 power or 1 XP
+  // One of each set of quests where finishing one rules out the others, and of quests giving the same gear
+  // (the Argent Dawn's tiers).
+  const seen = new Set()
+  const offers = [...zoneQuestOffers(character), ...dungeon].filter((o) => o.worth >= least).sort((a, b) => b.worth - a.worth).filter(({ id }) => {
+    const quest = getQuest(id)
+    const keys = [quest.exclusive && `group ${quest.exclusive}`, (quest.reward || quest.choice) && `gear ${quest.reward ?? ''}|${quest.choice ?? ''}`].filter(Boolean)
+    if (keys.some((k) => seen.has(k))) return false
+    for (const k of keys) seen.add(k)
+    return true
+  }).slice(0, QUEST_OFFERS)
+  offerCache.set(character, { key, offers })
+  return offers
+}
+
+function renderQuestOffers(character) {
+  const offers = questOffers(character)
   const maxed = character.characterLevel >= MAX_LEVEL
-  const perHour = (value) => (maxed ? `${value.toFixed(1)} power/hr` : `${formatNumber(Math.round(value))} XP/hr`)
   return [
-    el('h3', {}, 'Where to Farm'),
+    el('h3', {}, 'Best Rewards'),
     el('p', { class: 'note' }, maxed
-      ? `At level ${MAX_LEVEL} ${character.characterName} farms for gear: zones and dungeons are worth the power their upgrades add. It looks again after each upgrade, when it runs out of quests worth doing, or can't beat anything, and moves when another zone is worth clearly more.`
-      : `${character.characterName} levels where XP comes fastest, counting gear it would wear as XP too. Until level ${LEAVE_START_LEVEL} it stays in a starting zone. It looks again when it levels up, runs out of quests worth doing, or can't beat anything, and moves when another zone is worth clearly more. Sending it elsewhere lasts until then.`),
-    el('ol', { class: 'route' }, options.map(({ zone, value }, i) =>
-      el('li', { class: [i === 0 && 'route-step', zone === character.zone && 'route-here'].filter(Boolean).join(' ') || null },
-        `${zone} `, el('span', { class: 'route-level' }, perHour(value))))),
+      ? 'Quests it could pick up now whose reward gear adds the most power. It takes a quest when doing it beats grinding there.'
+      : 'Quests it could pick up now whose turn-in is worth the most: XP, with reward gear it would wear counted as XP. It takes a quest when doing it beats grinding there.'),
+    offers.length
+      ? el('ul', { class: 'focus-list' }, offers.map(({ id, worth: value, zone }) => {
+        const quest = getQuest(id)
+        return el('li', {},
+          el('span', { class: 'quest-title' }, `[${quest.level}] ${quest.title}`), ' ',
+          el('span', { class: 'route-level' }, maxed ? powerText(value) : `${formatNumber(Math.round(value))} XP`),
+          el('span', { class: 'loot-source' }, zone),
+          renderQuestRewards(character, [quest]),
+        )
+      }))
+      : el('p', { class: 'empty' }, maxed ? 'No quest it could pick up has gear it would wear.' : 'No quests it could pick up right now.'),
   ]
 }
 
 function renderProgress(character) {
-  return el('section', { class: 'sheet-panel', 'aria-label': 'Quests' },
+  return el('section', { class: 'sheet-panel sheet-quests', 'aria-label': 'Quests' },
     el('h3', {}, 'Questing'),
     el('p', {}, `${character.questsDone.length} quests completed. ${describeAction(character)}`),
-    character.zone && renderQuestLog(character),
-    renderZoneChoice(character),
+    el('h3', {}, `Quest Log (${questLogIds(character).length}/${QUEST_LOG_SIZE})`),
+    renderQuestLog(character),
+    renderQuestOffers(character),
+  )
+}
+
+// Worth per hour: XP below max level (gear counted as XP), power at max level.
+const rateText = (character, value) =>
+  (character.characterLevel >= MAX_LEVEL ? `${value.toFixed(1)} power/hr` : `${formatNumber(Math.round(value))} XP/hr`)
+const powerText = (power) => `+${power.toFixed(1)} power`
+
+// Each list scrolls; these cap how many rows it holds.
+const FOCUS_QUESTS = 10
+const FOCUS_ZONES = 6
+const FOCUS_DUNGEONS = 8
+const FOCUS_DROPS = 4 // per zone or dungeon
+const FOCUS_QUEST_DROPS = 2 // from the kills a quest takes
+const shown = (target) => target.power >= 0.05 // shows as at least +0.1 power
+
+// Tooltips in a scrolling list would be clipped by it, so they're fixed to the viewport next to the item.
+function placeTooltip(event) {
+  const slot = event.target.closest?.('.slot')
+  const tip = slot?.querySelector(':scope > .tooltip')
+  if (!tip) return
+  const r = slot.getBoundingClientRect()
+  const above = r.top > window.innerHeight / 2
+  Object.assign(tip.style, {
+    left: `${Math.max(8, Math.min(r.left, window.innerWidth - 328))}px`,
+    top: above ? 'auto' : `${r.bottom + 8}px`,
+    bottom: above ? `${window.innerHeight - r.top + 8}px` : 'auto',
+  })
+}
+const focusScroll = (key, items) => el('ul', { class: 'focus-list focus-scroll', 'data-scroll-key': key, onmouseover: placeTooltip, onfocusin: placeTooltip }, items)
+
+// The rows behind the lists, kept until what they depend on changes (the sheet re-renders on every event).
+const focusCache = new WeakMap()
+function focusRows(character) {
+  const key = `${character.zone}|${character.characterLevel}|${character.characterSpec}|${character.characterRole}|${Object.values(character.equipment).join()}|${talentKey(character)}|${character.questsDone.length}|${character.dungeonQuests.join()}|${character.dungeonQueue?.dungeons.join() ?? ''}`
+  const cached = focusCache.get(character)
+  if (cached?.key === key) return cached
+  const zones = zoneOptions(character)
+  const rows = { key, quests: focusQuests(character, zones), places: focusZones(character, zones), dungeons: focusDungeons(character) }
+  focusCache.set(character, rows)
+  return rows
+}
+
+// Quests worth doing that it's on here, then ones in other zones it weighs whose rewards it would wear.
+function focusQuests(character, zones) {
+  const rows = activeQuests(character, character.zone).map((id) => ({ id, zone: character.zone }))
+  for (const { zone } of zones) {
+    if (rows.length >= FOCUS_QUESTS) break
+    if (zone === character.zone) continue
+    for (const id of activeQuests(character, zone)) if (rewardGain(character, getQuest(id)) > 0) rows.push({ id, zone })
+  }
+  return rows.slice(0, FOCUS_QUESTS).map((row) => {
+    const kills = questKills(character, row.id)
+    const rares = kills.filter(([entry]) => respawnWait(entry)).map(([entry]) => `${getMob(entry).name} (about every ${formatDuration(respawnWait(entry) / 3600)})`)
+    return { ...row, rares, drops: lootTargets(character, kills).filter(shown) }
+  })
+}
+
+// Its zone, then the other zones it weighs whose mobs drop upgrades, most worth first.
+function focusZones(character, zones) {
+  const rows = [{ zone: character.zone, drops: grindTargets(character, character.zone).filter(shown) }]
+  for (const { zone } of zones) {
+    if (rows.length >= FOCUS_ZONES) break
+    if (zone === character.zone) continue
+    const drops = grindTargets(character, zone).filter(shown)
+    if (drops.length) rows.push({ zone, drops })
+  }
+  return rows
+}
+
+// Dungeons it's queued for, then the others it can enter, clear and get upgrades from, most worth first.
+function focusDungeons(character) {
+  const queued = character.dungeonQueue?.dungeons ?? []
+  const wanted = new Set(autoDungeons(character).map((d) => d.name))
+  const rows = queued.map((name) => getDungeon(name)).map((dungeon) => ({ dungeon, tag: 'Queued', drops: dungeonLoot(character, dungeon).filter(shown) }))
+  const others = DUNGEONS.filter((d) => !queued.includes(d.name) && !dungeonLockReason(character, d))
+    .map((d) => ({ dungeon: d, value: dungeonValue(character, d) }))
+    .filter((d) => d.value > 0)
+    .sort((a, b) => b.value - a.value)
+  for (const { dungeon } of others) {
+    if (rows.length >= FOCUS_DUNGEONS) break
+    const held = heldQuests(character, dungeon.name).map((id) => DUNGEON_QUESTS[id])
+    const drops = dungeonLoot(character, dungeon).filter(shown)
+    if (drops.length || held.some((q) => rewardGain(character, q) > 0)) {
+      rows.push({ dungeon, tag: wanted.has(dungeon.name) && 'Wanted', drops })
+    }
+  }
+  return rows.slice(0, FOCUS_DUNGEONS)
+}
+
+// What the character is farming for: the quests it works on, and the upgrades that make its zone and the
+// dungeons it wants worth the time. It values a place by every upgrade that can drop there times its
+// chance, counting only the best for each slot, so these are the items behind that worth, not a wish list.
+function renderFocus(character) {
+  const head = el('h3', {}, 'Farming For')
+  if (!character.zone) {
+    return el('section', { class: 'sheet-panel sheet-focus', 'aria-label': 'Farming for' }, head, el('p', { class: 'empty' }, 'Nothing while idle.'))
+  }
+  const maxed = character.characterLevel >= MAX_LEVEL
+  const { quests, places, dungeons } = focusRows(character)
+  const trips = [...errandTrips(character)]
+  return el('section', { class: 'sheet-panel sheet-focus', 'aria-label': 'Farming for' },
+    head,
+    el('p', { class: 'note' }, maxed
+      ? `At level ${MAX_LEVEL} only gear counts. A place is worth every upgrade that can drop there times its chance, counting only the best one for each slot; these are the items behind that worth.`
+      : `XP first, with gear counted as the XP it helps earn (+1 power is worth ${formatNumber(Math.round(worth(character).gear))} XP now). A place is worth every upgrade that can drop there times its chance, counting only the best one for each slot; these are the items behind that worth.`),
+    el('div', { class: 'focus-columns' },
+      el('div', { class: 'focus-column' },
+        el('h4', {}, 'Quests'),
+        quests.length
+          ? focusScroll('focus-quests', quests.map(({ id, zone, rares, drops }) => renderFocusQuest(character, getQuest(id), rateText(character, questPlan(character, id).rate), zone, rares, drops)))
+          : el('p', { class: 'note' }, 'None worth more than grinding.'),
+      ),
+      el('div', { class: 'focus-column' },
+        el('h4', {}, 'Zone drops'),
+        focusScroll('focus-zones', places.map(({ zone, drops }) => renderFocusZone(character, zone, drops))),
+      ),
+      el('div', { class: 'focus-column' },
+        el('h4', {}, 'Dungeons'),
+        dungeons.length
+          ? focusScroll('focus-dungeons', dungeons.map(({ dungeon, tag, drops }) => renderFocusDungeon(character, dungeon, tag, drops)))
+          : el('p', { class: 'note' }, 'No upgrades from dungeons it can clear.'),
+        trips.length > 0 && el('h4', {}, 'Quests to pick up'),
+        trips.length > 0 && el('ul', { class: 'focus-list' }, trips.map(([zone, trip]) =>
+          el('li', {}, `${zone ?? 'In town'}: `, trip.quests.map((id) => DUNGEON_QUESTS[id].title).join(', '), ' ',
+            el('span', { class: 'route-level' }, `worth ${maxed ? trip.value.toFixed(1) : formatNumber(Math.round(trip.value))} ${maxed ? 'power' : 'XP'}`)))),
+      ),
+    ),
+  )
+}
+
+// A quest it's working on: title, worth, the reward gear it would wear and the top upgrades its kills drop.
+function renderFocusQuest(character, quest, detail, zone, rares, drops) {
+  return el('li', {},
+    el('span', { class: 'quest-title' }, `[${quest.level}] ${quest.title}`), ' ',
+    el('span', { class: 'route-level' }, detail),
+    zone && el('span', { class: 'loot-source' }, zone === character.zone ? `${zone} (here)` : zone),
+    rares.length > 0 && el('span', { class: 'loot-source' }, `Waits on rare spawn: ${rares.join(', ')}`),
+    renderQuestRewards(character, [quest]),
+    drops.length > 0 && el('ul', { class: 'focus-drops' }, drops.slice(0, FOCUS_QUEST_DROPS).map((t) => renderTarget(t, 'quest'))),
+  )
+}
+
+function renderFocusZone(character, zone, drops) {
+  const hunted = huntedMobs(character, zone)
+  return el('li', { class: 'focus-dungeon' },
+    el('span', {}, el('span', { class: 'quest-title' }, zone), ' ', el('span', { class: 'route-level' }, rateText(character, grindValue(character, zone))),
+      zone === character.zone && [' ', badge('Here')]),
+    hunted.length > 0 && el('span', { class: 'loot-source' }, `Hunting: ${hunted.join(', ')}`),
+    drops.length
+      ? el('ul', { class: 'focus-drops' }, drops.slice(0, FOCUS_DROPS).map((t) => renderTarget(t, 'hour')))
+      : el('span', { class: 'loot-source' }, 'No upgrades drop from its mobs.'),
+  )
+}
+
+// The quests' reward gear the character would wear, as rows like the drops: what each adds, and the quest
+// it's from when `named` (rows not already under that quest). Most power first.
+function renderQuestRewards(character, quests, named = false) {
+  const rows = quests.flatMap((quest) => questRewardsFor(character, quest).map((id) => ({ id, quest, power: itemGain(character, id) })))
+    .filter(shown)
+    .sort((a, b) => b.power - a.power)
+  return rows.length > 0 && el('ul', { class: 'focus-drops' }, rows.map(({ id, quest, power }) =>
+    renderItemRow(getItem(id), named ? `${powerText(power)} · Quest: ${quest.title}` : powerText(power))))
+}
+
+function renderFocusDungeon(character, dungeon, tag, loot) {
+  const held = heldQuests(character, dungeon.name).map((id) => DUNGEON_QUESTS[id])
+  const drops = loot.slice(0, FOCUS_DROPS)
+  return el('li', { class: 'focus-dungeon' },
+    el('span', {}, el('span', { class: 'quest-title' }, dungeon.name), ' ', el('span', { class: 'route-level' }, rateText(character, dungeonValue(character, dungeon))),
+      tag && [' ', badge(tag)]),
+    held.length > 0 && el('span', { class: 'loot-source' }, `Quests held: ${held.map((q) => q.title).join(', ')}`),
+    renderQuestRewards(character, held, true),
+    drops.length > 0 && el('ul', { class: 'focus-drops' }, drops.map((t) => renderTarget(t, 'run'))),
+  )
+}
+
+// An upgrade that can drop: what it adds, the chance to win one, and who drops it.
+function renderTarget(target, per) {
+  const chance = target.chance >= 0.01 ? `${formatChance(target.chance)} per ${per}` : `1 in ${formatNumber(Math.round(1 / target.chance))} ${per}s`
+  return renderItemRow(getItem(target.id), `${powerText(target.power)} · ${chance} · ${getMob(target.from)?.name ?? 'unknown'}`)
+}
+
+function renderItemRow(item, meta) {
+  const name = `${item.name}${item.suffixes ? ' of ...' : ''}`
+  return el('li', { class: `slot slot-bottom q-${QUALITIES[item.quality]}`, tabindex: 0, 'aria-label': `${name}: ${meta}` },
+    renderIcon(item, item.name),
+    el('span', { class: 'slot-text' },
+      el('span', { class: 'item-name' }, name),
+      el('span', { class: 'target-meta' }, meta)),
+    renderTooltip(item),
   )
 }
 

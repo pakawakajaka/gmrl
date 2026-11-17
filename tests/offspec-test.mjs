@@ -53,13 +53,13 @@ w.changeSpec('Arms', 'DPS')
 
 // Sheet: Recent Loot sits under Bag; bag groups labeled.
 const sheet = renderCharacterSheet({ character: w })
-const stack = sheet.querySelector('.sheet-stack')
-check('bag then loot in a stack', stack && [...stack.children].map((s) => s.getAttribute('aria-label')).join() === 'Dungeons,Bag,Recent loot')
+const stack = sheet.querySelector('[aria-label="Bag"]').parentElement
+check('bag then loot in a stack', stack.classList.contains('sheet-stack') && [...stack.children].map((s) => s.getAttribute('aria-label')).join() === 'Bag,Recent loot')
 check('questing panel has no loot', ![...sheet.querySelectorAll('[aria-label="Quests"] h3')].some((h) => h.textContent === 'Recent Loot'))
 const labels = [...sheet.querySelectorAll('.bag-label')].map((h) => h.textContent)
 console.log('  bag groups:', labels.join(' | '))
 check('off-spec group shown', labels.includes('Off-spec: Protection'))
-check('every bag item shown once', sheet.querySelectorAll('.bag li').length === w.bag.length)
+check('every bag item shown once', sheet.querySelectorAll('[aria-label="Bag"] .bag li').length === w.bag.length)
 
 // Talent page spec picker.
 let picked

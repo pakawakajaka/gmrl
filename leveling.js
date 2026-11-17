@@ -38,14 +38,15 @@ export const travelSeconds = (from, to) => (!from || from === to ? 0 : from.cont
 // activeQuests), and grinding for the rest of PLAN_HOURS.
 export function zoneValue(character, zoneName, travel = 0) {
   const w = worth(character)
+  const horizon = PLAN_HOURS * 3600
   let value = 0
   let seconds = 0
   for (const id of activeQuests(character, zoneName)) {
     const plan = questPlan(character, id, w)
-    value += plan.value
-    seconds += plan.seconds
+    const odds = plan.wait > horizon ? horizon / plan.wait : 1 // rare spawns may not show up in time
+    value += plan.value * odds
+    seconds += plan.seconds * odds
   }
-  const horizon = PLAN_HOURS * 3600
   if (seconds < horizon) {
     value += (grindValue(character, zoneName) * (horizon - seconds)) / 3600
     seconds = horizon

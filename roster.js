@@ -72,7 +72,7 @@ function renderCharacterCard(character, account) {
         el('p', { class: 'badges' }, badge(character.characterRole), badge(character.faction)),
         el('p', { class: 'farm-status' }, `Power level ${formatNumber(Math.round(character.power.solo))} · Item level ${formatNumber(character.itemLevel)}`),
         el('p', { class: 'guild-tags' }, guild ? `<${guild.guildName}>` : 'No guild'),
-        el('p', { class: 'farm-status' }, character.zone ? `Farming in ${character.zone}` : 'Idle'),
+        el('p', { class: 'farm-status' }, character.farmStatus),
       ),
     ),
   )

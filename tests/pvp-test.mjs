@@ -90,7 +90,7 @@ check('joiners logged with sizes', !fights.some((f) => f.kind === 'brawl') || (j
 const earned = (acc) => acc.characters.reduce((s, c) => s + c.copper, 0)
 let fought = 0
 let farmed = 0
-for (const seed of [1, 2, 3]) {
+for (const seed of [1, 2, 3, 4, 5, 6]) {
   const loud = run(seed, 60)
   fought += earned(loud.acc)
   const quiet = account(undefined, 60)

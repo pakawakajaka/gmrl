@@ -2,6 +2,7 @@ import { badge, el, formatDuration, formatNumber, money } from './dom.js'
 import { MAX_LEVEL } from './data.js'
 import { CONTINENTS, ZONES, getZone, zoneDifficulty, zoneLockReason } from './zones.js'
 import { farmRates } from './combat.js'
+import { grindPlan, huntedMobs } from './value.js'
 import { renderSortControl, sortCharacters } from './sort.js'
 import { LEAVE_START_LEVEL, zoneOptions } from './leveling.js'
 import { renderGuildFilter } from './roster.js'
@@ -120,7 +121,7 @@ function renderZoneTables(account, character, onSend, onRecall) {
         el('span', { class: 'hint-text', id: 'farm-rules', role: 'tooltip' },
           'Characters fight the mobs in their zone, simulated with their gear and the best rotation of the spells they have trained, ',
           'and they eat and drink back up after (free vendor food and water for their level; health, mana, armor and spirit regen set how long). Quests come first: they take the ones worth more than grinding, hunt whatever those need, ',
-          'then grind anything they can beat. Rates here are for grinding; quest XP, gold and gear come on top. ',
+          'then grind the mobs most worth their time: everything they can beat, or just the best kinds when that pays for walking past the rest. Rates here are for grinding; quest XP, gold and gear come on top. ',
           'XP falls off as mobs drop below your level and stops once they turn gray; gold keeps coming. ',
           `New characters start in their race's starting zone and stay in a starting zone (theirs, or another they're sent to) until level ${LEAVE_START_LEVEL}. Farming characters then go where their time is worth most (the zone marked Best): below level ${MAX_LEVEL} that's mostly XP, with gear they'd wear counted in; at ${MAX_LEVEL} it's gear. They look again when they level up, run out of quests worth doing, or can't beat anything; at ${MAX_LEVEL} also after each upgrade. Sending one elsewhere lasts until then.`),
       )),
@@ -148,10 +149,11 @@ function renderZoneTables(account, character, onSend, onRecall) {
 function renderZoneRow(account, character, zone, best, onSend, onRecall) {
   const lockReason = zoneLockReason(character, zone)
   const isHere = character.zone === zone.name
-  const rates = farmRates(character, zone)
+  const rates = farmRates(character, zone, grindPlan(character, zone.name))
   const [lo, hi] = rates.mobLevels ?? []
+  const hunted = huntedMobs(character, zone.name)
   const fights = !rates.beatable ? 'Mobs here are too strong'
-    : `Level ${lo === hi ? lo : `${lo}–${hi}`} mobs: ${Math.round(rates.fightSeconds)}s fights, ${Math.round(rates.eatSeconds)}s eating, ${formatNumber(rates.killsPerHour)} kills/hr`
+    : `${hunted.length ? `Hunting ${hunted.join(', ')}. ` : ''}Level ${lo === hi ? lo : `${lo}–${hi}`} mobs: ${Math.round(rates.fightSeconds)}s fights, ${Math.round(rates.eatSeconds)}s eating, ${formatNumber(rates.killsPerHour)} kills/hr`
   const xpNote = character.characterLevel >= MAX_LEVEL ? 'Max level'
     : rates.beatable && rates.xpPerHour === 0 ? 'Gray: no XP' : null
   const farmers = account.characters.filter((c) => c.zone === zone.name)

@@ -53,7 +53,20 @@ const freshFights = fresh.tick(clock, seeded(2)).fights
 const added = { ...fresh.encounters.find((e) => e.kind === 'brawl'), at: a.encounters[0].at }
 a.encounters.unshift(added)
 fights.push(freshFights.find((x) => x.id === added.id))
-a.encounters[ENCOUNTER_DETAIL_SIZE].log = null
+// Getaways take a spotter facing a higher level it won't fight: add one from a mixed-level group if the
+// hours above had none.
+if (!a.encounters.some((e) => e.kind === 'evade')) {
+  for (let seed = 1; seed <= 20; seed++) {
+    const mixed = accountOf('Mixed', SPECS.map((s, i) => Object.assign(make(s, i), { characterLevel: i % 2 ? 30 : 24 })), clock - HOUR)
+    const got = mixed.tick(clock, seeded(seed)).fights
+    const getaway = mixed.encounters.find((e) => e.kind === 'evade')
+    if (!getaway) continue
+    a.encounters.splice(1, 0, { ...getaway, at: a.encounters[0].at })
+    fights.push(got.find((x) => x.id === getaway.id))
+    break
+  }
+}
+for (const e of a.encounters.slice(ENCOUNTER_DETAIL_SIZE)) e.log = null
 
 // --- Model
 check('every fight is logged, newest first', a.encounters.length === Math.min(fights.length, ENCOUNTER_LOG_SIZE) && a.encounters.every((e, i, all) => i === 0 || all[i - 1].at >= e.at), `${a.encounters.length} encounters`)
@@ -82,7 +95,7 @@ check('breakdown matches the log', fightsOnly.filter((e) => e.log && e.log.lengt
   const hits = e.log.filter((r) => r[1] === 0 && r[2] === i).length
   return hits === m.damage.reduce((s, r) => s + r[2], 0)
 })))
-const lastHp = (e, i) => e.log.filter((r) => r[3] === i && r[1] <= 1).at(-1)?.[7]
+const lastHp = (e, i) => e.log.filter((r) => r[3] === i && (r[1] <= 1 || r[1] === 3)).at(-1)?.[7] // hits, heals and self casts (Life Tap)
 check('the dead are at 0 health in the log, the rest above', fightsOnly.filter((e) => e.log).every((e) => e.members.every((m, i) => (m.out === 'died') === (lastHp(e, i) === 0))))
 // Survivors can regain health after their last logged hit (regen, Drain Life), never lose it.
 check('end health recorded: 0 for the dead, at least the log\'s last', fightsOnly.every((e) => e.members.every((m, i) => m.maxHp > 0 && m.hp >= 0 && m.hp <= m.maxHp && (m.out === 'died') === (m.hp === 0) && (!e.log || e.log.length >= 2000 || lastHp(e, i) === undefined || m.hp >= lastHp(e, i) - 1))))

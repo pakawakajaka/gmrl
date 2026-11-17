@@ -2,14 +2,14 @@
 // A farming character queues on its own for the dungeons worth more to it than farming where it is
 // (autoDungeons), after picking up their quests (errands, see nextErrand); players can also queue it by hand.
 // Queued characters keep farming until five of a faction are waiting for the same dungeon and make a group
-// that can clear it (formGroups). Dungeon quests don't count toward the five-quest log.
+// that can clear it (formGroups). Dungeon quests take slots in the quest log like any other (see quests.js).
 import { CLASSES, MAX_LEVEL, MIN_LEVEL, RACES, ROLES } from './data.js'
 import { CLASS_BITS, DUNGEONS, DUNGEON_QUESTS, RACE_BITS, bestLoadout, canUseNow, getItem, questRewardsFor, rollMobLoot } from './gear.js'
 import { getMob, killXp, mobLevelFor, questXp } from './combat.js'
 import { levelPower } from './power.js'
-import { QUEST_SECONDS } from './quests.js'
+import { QUEST_LOG_SIZE, QUEST_SECONDS, logRoom, makeRoom, questLogIds, zoneQuestSet } from './quests.js'
 import { zoneValue } from './leveling.js'
-import { rewardGain, runGear, worth } from './value.js'
+import { lootTargets, rewardGain, runGear, worth } from './value.js'
 import { talentKey } from './talents.js'
 import { getZone } from './zones.js'
 
@@ -115,12 +115,13 @@ function pickupValue(character, id, w) {
 }
 
 // The pickup trips worth making: Map(zone, or null for a city -> { quests, seconds, value }) for the quests
-// the character wants (wantedQuests), by where their giver is. A trip is worth making when its quests are
-// worth ERRAND_MARGIN times the farming the trip costs where the character is; skipped ones wait until more
-// quests there add up. Recomputed when zone, level, gear, talents or quests change.
+// the character wants (wantedQuests) and has room for in its log (logRoom, keeping its zone's quests; chain
+// steps are done on the spot and take none), by where their giver is. A trip is worth making when its quests
+// are worth ERRAND_MARGIN times the farming the trip costs where the character is; skipped ones wait until
+// more quests there add up. Recomputed when zone, level, gear, talents or quests change.
 const tripCache = new WeakMap()
 export function errandTrips(character) {
-  const key = `${character.zone}|${character.characterLevel}|${character.questsDone.length}|${character.dungeonQuests.join()}|${Object.values(character.equipment).join()}|${talentKey(character)}`
+  const key = `${character.zone}|${character.characterLevel}|${character.questsDone.length}|${questLogIds(character).join()}|${Object.values(character.equipment).join()}|${talentKey(character)}`
   const cached = tripCache.get(character)
   if (cached?.key === key) return cached.trips
   const trips = new Map()
@@ -128,7 +129,15 @@ export function errandTrips(character) {
   if (byZone.size) {
     const w = worth(character)
     const farming = zoneValue(character, character.zone) / 3600
-    for (const [zone, quests] of byZone) {
+    const here = zoneQuestSet(character.zone)
+    for (const [zone, wanted] of byZone) {
+      const take = logRoom(character, (id) => here.has(id), w)
+      const quests = wanted
+        .map((id) => ({ id, value: pickupValue(character, id, w) }))
+        .sort((a, b) => b.value - a.value)
+        .filter(({ id }) => DUNGEON_QUESTS[id].step || take(id))
+        .map(({ id }) => id)
+      if (!quests.length) continue
       const seconds = (zone === character.zone ? 0 : TRAVEL_SECONDS) +
         quests.reduce((sum, id) => sum + (DUNGEON_QUESTS[id].step ? QUEST_SECONDS : PICKUP_SECONDS), 0)
       const value = quests.reduce((sum, id) => sum + pickupValue(character, id, w), 0)
@@ -149,16 +158,20 @@ export function nextErrand(character) {
   return best && { errand: { zone: best.zone, quests: best.trip.quests }, seconds: best.trip.seconds }
 }
 
-// Picks up the errand's quests and does its chain steps. Returns the steps' { xp, copper, found } and
-// the dungeon quest ids picked up.
+// Picks up the errand's quests (making room in the log, see makeRoom) and does its chain steps. Returns the
+// steps' { xp, copper, found } and the dungeon quest ids picked up.
 export function runErrand(character, errand) {
   let xp = 0
   let copper = 0
   const found = []
   const picked = []
+  const here = zoneQuestSet(character.zone)
+  const keep = (id) => here.has(id) || errand.quests.includes(id)
   for (const id of errand.quests) {
     const quest = DUNGEON_QUESTS[id]
     if (!quest.step) {
+      makeRoom(character, keep)
+      if (questLogIds(character).length >= QUEST_LOG_SIZE) continue
       character.dungeonQuests.push(id)
       picked.push(id)
       continue
@@ -209,6 +222,9 @@ export function dungeonValue(character, dungeon) {
   values.set(dungeon.name, { key, value })
   return value
 }
+
+// The upgrades behind a clear's gear worth (see lootTargets); `chance` is per run, after the group's need rolls.
+export const dungeonLoot = (character, dungeon) => lootTargets(character, killLists.get(dungeon.name), NEED_SHARE)
 
 // Dungeons a character queues for on its own, most worth first: [{ name, value }] for those in its level
 // range worth more than farming its zone. Recomputed when level, gear, talents, quests or zone change.

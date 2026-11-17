@@ -974,6 +974,11 @@ main:has(.character-sheet) {
   color: var(--text-muted);
 }
 
+.sheet-status {
+  margin-top: 0.15rem;
+  font-size: 0.9rem;
+}
+
 .sheet-actions {
   display: flex;
   gap: 0.5rem;
@@ -1251,6 +1256,13 @@ main:has(.character-sheet) {
   padding: 1rem;
 }
 
+/* Quest panel sections (Quest Log, Best Rewards) are set apart by a divider. */
+.sheet-quests > h3:not(:first-child) {
+  margin-top: 0.5rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
 /* Talents: sheet tile and the three-tree selector. Gold borders mark the spec's default build. */
 .talent-tile {
   justify-items: start;
@@ -1262,6 +1274,44 @@ main:has(.character-sheet) {
 
 .talent-tile .empty {
   padding: 0;
+}
+
+.talent-tile-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.talent-tile-body > div {
+  flex: 1;
+  min-width: 10rem;
+}
+
+.talent-tile-spec {
+  font-weight: 600;
+  color: var(--class-color);
+}
+
+.spec-icon {
+  --quality: var(--class-color);
+  position: relative;
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  overflow: hidden;
+  border: 2px solid var(--class-color);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.spec-icon img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
 }
 
 .talent-help {
@@ -1529,41 +1579,17 @@ main:has(.character-sheet) {
   text-decoration: line-through;
 }
 
-/* Zones weighed: the best in gold, the zone it's in now bold. */
-.route {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.3rem;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  font-size: 0.8rem;
-  color: var(--text-muted);
+.quest-log > li > .loot-source {
+  display: block;
 }
 
-.route li {
-  padding: 0.1rem 0.45rem;
-  border: 1px solid var(--border);
-  border-radius: 999px;
+.quest-log .badge {
+  font-size: 0.7rem;
 }
 
 .route-level {
   font-variant-numeric: tabular-nums;
   opacity: 0.75;
-}
-
-.route .route-step {
-  border-color: #ffd100;
-  color: #ffd100;
-}
-
-.route .route-here {
-  font-weight: 600;
-  color: var(--text);
-}
-
-.route .route-step.route-here {
-  color: #ffd100;
 }
 
 .path-mark {
@@ -1623,7 +1649,7 @@ main:has(.character-sheet) {
 /* Paper doll and talents on top, PvP filling the rest of the column beside the stats. */
 .sheet-column {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 1.5rem;
   align-self: stretch;
 }
@@ -2319,6 +2345,80 @@ main:has(.character-sheet) {
   color: var(--text-muted);
 }
 
+/* Farming For: the quests, drops and dungeons behind what the character is doing. */
+.sheet-focus {
+  margin-bottom: 1.5rem;
+}
+
+.focus-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 1rem;
+  align-items: start;
+}
+
+.focus-column {
+  display: grid;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.focus-column h4 {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.focus-list,
+.focus-drops {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.85rem;
+}
+
+.focus-dungeon {
+  display: grid;
+  gap: 0.3rem;
+  padding: 0.4rem 0.6rem;
+  border-left: 3px solid var(--class-color);
+  border-radius: 6px;
+  background: var(--surface-raised);
+}
+
+.focus-dungeon .slot {
+  background: var(--surface);
+}
+
+.focus-scroll {
+  max-height: 30rem;
+  padding-right: 0.25rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.focus-scroll .tooltip {
+  position: fixed;
+  margin: 0;
+}
+
+.focus-list > li > .loot-source {
+  display: block;
+}
+
+.focus-dungeon .badge {
+  font-size: 0.7rem;
+}
+
+.target-meta {
+  overflow: hidden;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 @media (max-width: 640px) {
   .dungeon-row {
     flex-wrap: wrap;
@@ -2336,10 +2436,11 @@ main:has(.character-sheet) {
 }
 
 @media (min-width: 901px) {
-  /* Sized by the column, not its log, so a long log scrolls instead of stretching the row. */
-  .sheet-pvp {
+  /* The log is sized by the column, not its entries, so a long log scrolls instead of stretching the row;
+     the rest of the panel keeps its height. */
+  .sheet-pvp .pvp-log {
     contain: size;
-    min-height: 16rem;
+    min-height: 8rem;
   }
 }
 

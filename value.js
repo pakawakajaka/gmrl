@@ -5,7 +5,7 @@
 import { MAX_LEVEL, xpToNextLevel } from './data.js'
 import { ITEMS, LOOT, LOOT_REFS, MOBS, SUFFIX_POOLS } from './gear-data.js'
 import { SLOTS, canDualWield, canUseNow, fitsSlot, getItem, isTwoHand, itemScore, levelToUse, profileOf, questRewardsFor } from './gear.js'
-import { combatOf, commonPool } from './combat.js'
+import { NORMAL_RESPAWN, OVERHEAD_SECONDS, combatOf, grindPool } from './combat.js'
 import { scorePower } from './power.js'
 
 // Levels a piece of leveling gear is worn before something better replaces it.
@@ -205,7 +205,7 @@ function valuesOf(character) {
   const ctx = combatOf(character)
   const key = `${character.characterSpec}|${character.characterRole}`
   let values = valueCaches.get(ctx)
-  if (values?.key !== key) valueCaches.set(ctx, (values = { key, mobs: new Map(), refs: new Map(), zones: new Map() }))
+  if (values?.key !== key) valueCaches.set(ctx, (values = { key, mobs: new Map(), refs: new Map(), zones: new Map(), plans: new Map() }))
   return values
 }
 
@@ -291,6 +291,118 @@ function bestUpgrades(character, gains, drops, share = 1) {
   return score
 }
 
+// The upgrades behind the gear worth of `kills` ([[mob entry, count]]) when the character gets `share` of
+// what drops, most worth first: [{ id, from, chance, power, worth }]. `from` is the mob that drops the most
+// of it, `chance` that at least one is won, `power` what wearing it would add, and `worth` its part of the
+// expected power: power × chance × the chance nothing better for its place was won (see bestUpgrades).
+// Shared lists (world drops) count too.
+export function lootTargets(character, kills, share = 1) {
+  const table = dropsOf(character)
+  const gains = gainsOf(character)
+  const level = character.characterLevel
+  const drops = new Map() // item id -> { n, from, most }
+  const add = (id, n, entry) => {
+    if (!(table.levels.get(id) <= level)) return
+    const drop = drops.get(id)
+    if (!drop) drops.set(id, { n, from: entry, most: n })
+    else {
+      drop.n += n
+      if (n > drop.most) Object.assign(drop, { from: entry, most: n })
+    }
+  }
+  for (const [entry, count] of kills) {
+    const { items, refs } = mobDrops(character, table, entry)
+    for (const [id, n] of items) add(id, n * count, entry)
+    for (const [ref, m] of refs) for (const [id, n] of refDrops(character, table, ref)) add(id, m * n * count, entry)
+  }
+  const places = new Map()
+  for (const [id, { n, from }] of drops) {
+    const gain = dropScore(character, gains, id)
+    if (gain <= 0) continue
+    const place = placeOfId(id)
+    const option = { id, from, gain, chance: share * (1 - Math.exp(-n)) }
+    if (places.has(place)) places.get(place).push(option)
+    else places.set(place, [option])
+  }
+  const targets = []
+  for (const options of places.values()) {
+    let none = 1
+    for (const { id, from, gain, chance } of options.sort((a, b) => b.gain - a.gain)) {
+      targets.push({ id, from, chance, power: scorePower(character, gain), worth: scorePower(character, gain * chance * none) })
+      none *= 1 - chance
+    }
+  }
+  return targets.sort((a, b) => b.worth - a.worth)
+}
+
+// lootTargets for an hour of grinding the zone (see grindPlan); `chance` is per hour.
+export function grindTargets(character, zoneName) {
+  const { total, weighted, kills } = grindPlan(character, zoneName)
+  if (!total) return []
+  return lootTargets(character, weighted.map(({ fight, weight }) => [fight.entry, (kills * weight) / total]))
+}
+
+// Hunting only some kinds of a zone's mobs takes this much more worth than grinding all it can beat.
+const TARGET_MARGIN = 1.05
+
+// How the character grinds the zone: which of the mobs it can beat (see grindPool in combat.js) it hunts,
+// and how fast. It takes the kinds most worth per second of fighting (see killValue) for as long as that
+// pays: hunting a share of the zone's spawns means walking past the rest, OVERHEAD_SECONDS × (1/√share − 1)
+// more per kill, and a kind can't be killed faster than it respawns. { total, weighted: [{ fight, weight,
+// upTo }] (as grindPool, just the ones hunted), kills: per hour, extra: seconds per kill on top of the
+// fight's (searching, waiting on respawns), targeted: true when it hunts only some }
+export function grindPlan(character, zoneName) {
+  const { plans } = valuesOf(character)
+  let plan = plans.get(zoneName)
+  if (plan) return plan
+  const pool = grindPool(character, zoneName)
+  const w = worth(character)
+  const mobs = pool.weighted.map(({ fight, weight }) => ({ fight, weight, value: killValue(character, fight, w) }))
+    .sort((a, b) => b.value / b.fight.seconds - a.value / a.fight.seconds)
+  const options = []
+  let weight = 0
+  let seconds = 0
+  let value = 0
+  for (const m of mobs) {
+    weight += m.weight
+    seconds += m.weight * m.fight.seconds
+    value += m.weight * m.value
+    const search = options.length === mobs.length - 1 ? 0 : OVERHEAD_SECONDS * (Math.sqrt(pool.total / weight) - 1)
+    const wait = Math.max(0, NORMAL_RESPAWN / weight - (seconds / weight + search))
+    const kills = 3600 / (seconds / weight + search + wait)
+    options.push({ count: options.length + 1, kills, extra: search + wait, rate: (kills * value) / weight })
+  }
+  const all = options.at(-1)
+  let pick = all
+  for (const o of options) if (o.rate > pick.rate && o.rate > all.rate * TARGET_MARGIN) pick = o
+  if (!pick) plan = { total: 0, weighted: [], kills: 0, extra: 0, targeted: false }
+  else {
+    const hunted = new Set(mobs.slice(0, pick.count).map((m) => m.fight))
+    let total = 0
+    const weighted = []
+    for (const { fight, weight } of pool.weighted) if (hunted.has(fight)) weighted.push({ fight, weight, upTo: (total += weight) })
+    plan = { total, weighted, kills: pick.kills, extra: pick.extra, targeted: pick !== all }
+  }
+  plans.set(zoneName, plan)
+  return plan
+}
+
+// The next mob to grind in the zone, picked by how often each it hunts is around (see grindPlan):
+// { fight, seconds } with the search and waiting, or undefined if there's nothing it can beat.
+export function pickGrindTarget(character, zoneName, random = Math.random) {
+  const { total, weighted, extra } = grindPlan(character, zoneName)
+  if (!total) return undefined
+  const pick = random() * total
+  const { fight } = weighted.find((m) => pick < m.upTo) ?? weighted.at(-1)
+  return { fight, seconds: fight.seconds + extra }
+}
+
+// Names of the kinds of mobs the character hunts in the zone when it hunts only some (see grindPlan), else [].
+export function huntedMobs(character, zoneName) {
+  const plan = grindPlan(character, zoneName)
+  return plan.targeted ? [...new Set(plan.weighted.map((m) => m.fight.mob.name))] : []
+}
+
 // Solo power that wearing the item now would add.
 export function itemGain(character, key) {
   return scorePower(character, scoreGain(character, key))
@@ -304,24 +416,19 @@ export function killValue(character, fight, w = worth(character)) {
   return fight.xp * w.xp + killGear(character, fight.entry) * w.gear
 }
 
-// Worth per hour of grinding the zone's mobs, judged by its common ones (see commonPool); 0 if there's
-// nothing to beat. Of the gear their own loot lists drop in an hour, only the best upgrade for each place
-// counts; shared lists (world drops) are rare enough per item to add up.
+// Worth per hour of grinding the zone's mobs (see grindPlan); 0 if there's nothing to beat. Of the gear
+// their own loot lists drop in an hour, only the best upgrade for each place counts; shared lists (world
+// drops) are rare enough per item to add up.
 export function grindValue(character, zoneName) {
   const values = valuesOf(character)
   const { zones } = values
   if (zones.has(zoneName)) return zones.get(zoneName)
-  const { total, weighted } = commonPool(character, zoneName)
+  const { total, weighted, kills } = grindPlan(character, zoneName)
   let rate = 0
   if (total) {
     const w = worth(character)
     let xp = 0
-    let seconds = 0
-    for (const { fight, weight } of weighted) {
-      xp += weight * fight.xp
-      seconds += weight * fight.seconds
-    }
-    const kills = (3600 * total) / seconds
+    for (const { fight, weight } of weighted) xp += weight * fight.xp
     const table = dropsOf(character)
     const gains = gainsOf(character)
     const drops = new Map()
@@ -333,7 +440,7 @@ export function grindValue(character, zoneName) {
       for (const [ref, n] of refs) score += n * share * refScore(values, character, table, gains, ref)
     }
     score += bestUpgrades(character, gains, drops)
-    rate = (xp / seconds) * 3600 * w.xp + scorePower(character, score) * w.gear
+    rate = ((xp * kills) / total) * w.xp + scorePower(character, score) * w.gear
   }
   zones.set(zoneName, rate)
   return rate

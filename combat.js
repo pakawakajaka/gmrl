@@ -9,8 +9,20 @@ import { grayLevel, zeroDifference } from './zones.js'
 
 export const getMob = (entry) => (Object.hasOwn(MOBS, entry) ? MOBS[entry] : undefined)
 
+// Rare spawns (spawn weight across all zones under RARE_SPAWNS, e.g. Lord Darkscythe at 0.004) are up too
+// seldom to farm: one shows up about every respawnWait seconds. Weight is NORMAL_RESPAWN over the respawn
+// time (see build-gear-data.mjs). Named quest targets sit around 0.7; common mobs at 1 and up.
+const RARE_SPAWNS = 0.1
+export const NORMAL_RESPAWN = 300
+const spawnWeights = new Map()
+for (const list of Object.values(ZONE_MOBS)) for (const [entry, weight] of list) spawnWeights.set(Number(entry), (spawnWeights.get(Number(entry)) ?? 0) + weight)
+export function respawnWait(entry) {
+  const weight = spawnWeights.get(Number(entry))
+  return weight < RARE_SPAWNS ? NORMAL_RESPAWN / weight : 0
+}
+
 // Finding, pulling and looting the next mob. Health and mana regen during it.
-const OVERHEAD_SECONDS = 12
+export const OVERHEAD_SECONDS = 12
 // Classic's five-second rule: no spirit mana regen until 5 seconds after the last cast.
 const FIVE_SECOND_RULE = 5
 // Sitting to eat raises spirit health regen by half.
@@ -117,7 +129,6 @@ export function combatOf(character) {
     manaBack: { overhead: mp5 * OVERHEAD_SECONDS + manaRegen * Math.max(0, OVERHEAD_SECONDS - FIVE_SECOND_RULE), drinking: manaRegen + mp5 + drink.mana / drink.seconds },
     fights: new Map(),
     pools: new Map(),
-    commonPools: new Map(),
     duels: new Map(), // see pvp.js
   }
   contexts.set(character, ctx)
@@ -215,22 +226,6 @@ function levelBand(zoneName, level) {
   return band
 }
 
-// The band's most common mobs, making up COMMON_SHARE of its spawns.
-const COMMON_SHARE = 0.75
-const commonCache = new Map()
-function commonBand(zoneName, level) {
-  const key = `${zoneName}|${level}`
-  if (commonCache.has(key)) return commonCache.get(key)
-  const band = levelBand(zoneName, level).toSorted((a, b) => b[1] - a[1])
-  const enough = COMMON_SHARE * band.reduce((sum, [, weight]) => sum + weight, 0)
-  let count = 0
-  let sum = 0
-  while (sum < enough) sum += band[count++][1]
-  const common = band.slice(0, count)
-  commonCache.set(key, common)
-  return common
-}
-
 function poolOf(ctx, character, band) {
   let total = 0
   const weighted = []
@@ -250,33 +245,17 @@ export function grindPool(character, zoneName) {
   return pool
 }
 
-// The same from just the zone's most common mobs: about what grinding there is like, for weighing zones
-// at a fraction of the fights.
-export function commonPool(character, zoneName) {
-  const ctx = combatOf(character)
-  let pool = ctx.commonPools.get(zoneName)
-  if (!pool) ctx.commonPools.set(zoneName, (pool = poolOf(ctx, character, commonBand(zoneName, character.characterLevel))))
-  return pool
-}
-
-export function pickGrindTarget(character, zoneName, random = Math.random) {
-  const { total, weighted } = grindPool(character, zoneName)
-  if (!total) return undefined
-  const pick = random() * total
-  return (weighted.find((m) => pick < m.upTo) ?? weighted.at(-1)).fight
-}
-
-// Expected rates from grinding the zone's mobs (quest rewards come on top). `beatable` is false when every
+// Expected rates from grinding the zone's mobs (quest rewards come on top): all it can beat, or `pool`, a
+// pick of them with its own `kills` per hour (see grindPlan in value.js). `beatable` is false when every
 // mob in the character's range is too strong for it.
-export function farmRates(character, zone) {
+export function farmRates(character, zone, pool = grindPool(character, zone.name)) {
   const power = combatOf(character).power
-  const { total, weighted } = grindPool(character, zone.name)
+  const { total, weighted } = pool
   if (!total) {
     return { power, beatable: false, killsPerHour: 0, xpPerHour: 0, copperPerHour: 0, fightSeconds: 0, eatSeconds: 0, dps: 0, mobLevels: null }
   }
   const avg = (key) => weighted.reduce((sum, m) => sum + m.fight[key] * m.weight, 0) / total
-  const seconds = avg('seconds')
-  const killsPerHour = 3600 / seconds
+  const killsPerHour = pool.kills ?? 3600 / avg('seconds')
   const levels = weighted.map((m) => m.fight.level)
   return {
     power,
