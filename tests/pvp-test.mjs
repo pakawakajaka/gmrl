@@ -34,8 +34,8 @@ const make = ([cls, spec, race, role], level, zone, i) =>
   new Character({ id: `c${i}`, characterName: `${cls}${'ABCDEFGHIJKLMNOPQRSTUVWXYZ'[i]}`, characterClass: cls, characterSpec: spec, characterRace: race, characterRole: role, characterLevel: level, zone })
 const HOUR = 3600 * 1000
 const now = Date.UTC(2025, 0, 1)
-function account(zone = 'Hillsbrad Foothills', level = 25) {
-  return accountOf('Test', SPECS.map((s, i) => make(s, level, zone, i)), now - 10 * HOUR)
+function account(zone = 'Hillsbrad Foothills', level = 25, hours = 10) {
+  return accountOf('Test', SPECS.map((s, i) => make(s, level, zone, i)), now - hours * HOUR)
 }
 const summary = (fights) => fights.map((f) => f.kind === 'evade' ? `${f.runner.id}~${f.chaser.id}:${f.how}` : `${f.kind}:${f.sides.map((s) => s.map((c) => c.id).join('+')).join('v')}:${f.winner}:${f.dead.map((c) => c.id)}`).join()
 
@@ -44,9 +44,9 @@ const factions = account().characters.map((c) => c.faction)
 check('5 Alliance and 5 Horde', factions.filter((f) => f === 'Alliance').length === 5 && factions.filter((f) => f === 'Horde').length === 5, factions.join())
 
 // Loot rolls use Math.random; seed it too so whole ticks repeat.
-const run = (seed, level) => {
+const run = (seed, level, hours) => {
   Math.random = seeded(seed + 1000)
-  const acc = account(undefined, level)
+  const acc = account(undefined, level, hours)
   acc.characters.forEach((c, i) => { c.dungeonQueue = { dungeons: [`none${i}`], since: 0, manual: true } }) // no dungeon runs
   return { acc, ...acc.tick(now, seeded(seed)) }
 }
@@ -56,8 +56,14 @@ const travelers = new Set(moved.map((t) => t.character.id)) // moved to another 
 const ms = performance.now() - t0
 const fights = events.filter((f) => f.kind !== 'evade')
 check('fights happen over 10 hours', fights.length > 0, `${fights.length} fights (${fights.filter((f) => f.kind === 'brawl').length} brawls) in ${ms.toFixed(0)} ms`)
-// A returning player can wait up to 12s; shared CI machines run 2-3x slower than a desktop.
-check('10 hours of PvP and farming for 10 characters < 12s', ms < 12000, `${ms.toFixed(0)} ms`)
+// The most time away that pays out (MAX_AWAY_HOURS). A returning player can wait up to 40s; shared CI machines
+// run 2-3x slower than a desktop.
+{
+  const t = performance.now()
+  run(1, undefined, 30)
+  const slow = performance.now() - t
+  check('30 hours of PvP and farming for 10 characters < 40s', slow < 40000, `${slow.toFixed(0)} ms`)
+}
 check('only cross-faction fights', fights.every((f) => f.sides.every((s, i) => s.every((c) => c.faction === f.sides[i][0].faction && (travelers.has(c.id) || c.zone === f.zone))) && f.sides[0][0].faction !== f.sides[1][0].faction))
 check('same seed, same fights', summary(run(1).fights) === summary(events))
 check('another seed, other fights', summary(run(2).fights) !== summary(events))
