@@ -4,7 +4,7 @@
 // Queued characters keep farming until five of a faction are waiting for the same dungeon and make a group
 // that can clear it (formGroups). Dungeon quests take slots in the quest log like any other (see quests.js).
 import { CLASSES, MAX_LEVEL, MIN_LEVEL, RACES, ROLES } from './data.js'
-import { CLASS_BITS, DUNGEONS, DUNGEON_QUESTS, RACE_BITS, baseId, bestLoadout, canUseNow, getItem, questRewardsFor, rollMobLoot } from './gear.js'
+import { CLASS_BITS, DUNGEONS, DUNGEON_QUESTS, KEPT_AS, RACE_BITS, baseId, bestLoadout, canUseNow, getItem, questRewardsFor, rollMobLoot } from './gear.js'
 import { getMob, killXp, mobLevelFor, questXp } from './combat.js'
 import { foeFor } from './sim.js'
 import { levelPower } from './power.js'
@@ -28,7 +28,6 @@ const CLEAR_SHARE = 0.6 // of a dungeon's trash a run kills; the rest is skipped
 const GROUP_XP = 1.4 / GROUP_SIZE // Classic's five-player group bonus, split five ways
 const MIN_PACE = 0.6 // slower than this and the group wipes
 const MISSING_ROLE = 0.8 // pace without a tank, and again without a healer
-const LOG_QUALITY = 2 // loot of this quality and up goes in the run log
 // A character's guess at its group's pace: a typical group's party power over five of its own base power.
 const PACE_GUESS = 1.2
 // Of the upgrades that drop, the share a character expects to win.
@@ -357,6 +356,7 @@ function wouldEquip(character, key) {
 // members who'd wear it right away roll Need, otherwise everyone rolls Greed. A group too weak for the dungeon
 // gets part way and wipes, with no quest credit, and doesn't queue again on its own until it levels or picks
 // up quests. Members who want an item (see Character.wanted) roll Need on it too. Members finish by turning in the dungeon's quests.
+// The record's loot is only what the winners kept (see Character.keptAs), once each; the rest was sold.
 // Returns { record, members, results } with each member's { levels, upgrades, travel }.
 export function runDungeon(members, dungeon, now, random = Math.random) {
   const pace = groupPace(members, dungeon)
@@ -370,8 +370,9 @@ export function runDungeon(members, dungeon, now, random = Math.random) {
     ...dungeon.trash.map(([entry, count]) => [entry, Math.round(count * CLEAR_SHARE * progress)]).filter(([, n]) => n > 0),
   ]
   const wornBefore = members.map((c) => new Set(Object.values(c.equipment)))
+  const heldBefore = members.map((c) => c.heldItems())
   const shares = members.map(() => ({ xp: 0, copper: 0, found: [] }))
-  const loot = []
+  const drops = []
   let trash = 0
   for (const [entry, count] of kills) {
     const mob = getMob(entry)
@@ -387,15 +388,15 @@ export function runDungeon(members, dungeon, now, random = Math.random) {
         const winner = pool[Math.floor(random() * pool.length)]
         const index = members.indexOf(winner)
         winner.equipBest([item])
-        shares[index].found.push({ item, source: mob.name })
-        if (getItem(item).quality >= LOG_QUALITY || needers.length) loot.push({ item, to: index, need: needers.length > 0, from: mob.name })
+        shares[index].found.push({ item, source: mob.name, place: dungeon.name })
+        drops.push({ item, to: index, from: mob.name })
       }
     }
   }
   const results = members.map((c, i) => {
     const quests = success ? heldQuests(c, dungeon.name) : []
     const level = c.characterLevel
-    const outcome = c.finishDungeon({ ...shares[i], xp: Math.round(shares[i].xp), copper: Math.round(shares[i].copper), quests, wornBefore: wornBefore[i] }, now)
+    const outcome = c.finishDungeon({ ...shares[i], xp: Math.round(shares[i].xp), copper: Math.round(shares[i].copper), quests, wornBefore: wornBefore[i], heldBefore: heldBefore[i], place: dungeon.name }, now)
     c.timeBank -= seconds
     c.restingAfter = dungeon.name
     c.dungeonQueue = null
@@ -403,6 +404,13 @@ export function runDungeon(members, dungeon, now, random = Math.random) {
     else leaveQueue(c)
     return { ...outcome, level, quests, share: shares[i] }
   })
+  const loot = []
+  for (const { item, to, from } of drops) {
+    const kept = !heldBefore[to].has(item) && members[to].keptAs(item)
+    if (!kept) continue
+    heldBefore[to].add(item)
+    loot.push({ item, to, kept, from })
+  }
   const record = {
     id: crypto.randomUUID(),
     at: now,
@@ -511,9 +519,11 @@ export function restoreRun(run) {
     return { id: m.id, name: m.name.slice(0, 12), class: m.class, race: m.race, spec: m.spec.slice(0, 30), role: m.role, level: m.level, xp: amount(m.xp), copper: amount(m.copper), quests }
   })
   if (!members.length || members.some((m) => !m)) return null
+  // Older runs logged greed wins too, which were mostly sold: only their need wins (worn) still show.
   const loot = run.loot
     .filter((l) => l && (typeof l.item === 'string' || Number.isInteger(l.item)) && getItem(l.item) && Number.isInteger(l.to) && l.to >= 0 && l.to < members.length)
-    .map((l) => ({ item: l.item, to: l.to, need: l.need === true, from: typeof l.from === 'string' ? l.from.slice(0, 60) : '' }))
+    .map((l) => ({ item: l.item, to: l.to, kept: KEPT_AS.includes(l.kept) ? l.kept : l.need === true ? 'equipped' : null, from: typeof l.from === 'string' ? l.from.slice(0, 60) : '' }))
+    .filter((l) => l.kept)
   const success = run.success === true
   const bosses = Number.isInteger(run.bosses) ? Math.min(Math.max(run.bosses, 0), dungeon.bosses.length) : 0
   const wipedOn = () => {

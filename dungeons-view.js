@@ -3,7 +3,7 @@ import { CLASSES, classIcon } from './data.js'
 import { el, formatDuration, formatNumber, money } from './dom.js'
 import { DUNGEON_QUESTS, QUALITIES, getItem } from './gear.js'
 import { DUNGEONS, GROUP_SIZE, RUN_METER_SIZE, dungeonQuestIds, getDungeon, isQueuedFor } from './dungeons.js'
-import { renderTooltip } from './character-sheet.js'
+import { KEPT_TEXT, renderTooltip } from './character-sheet.js'
 import { earnedBadges } from './badges.js'
 
 const FACTIONS = ['Alliance', 'Horde']
@@ -32,7 +32,7 @@ function renderList(account) {
       tally('Quests turned in', runs.reduce((n, r) => n + questCount(r), 0)),
       tally('Queued', account.characters.filter((c) => c.dungeonQueue).length),
     ),
-    el('p', { class: 'note' }, `Farming characters pick up the quests for dungeons in their level range, traveling for them when needed, then queue on their own. Queue anyone by hand from their character page. When ${GROUP_SIZE} of a faction are queued for the same dungeon, they run it together: drops go to whoever would wear them now (Need), else to a random member (Greed), and finishing turns in everyone's quests for it.`),
+    el('p', { class: 'note' }, `Farming characters pick up the quests for dungeons in their level range, traveling for them when needed, then queue on their own. Queue anyone by hand from their character page. When ${GROUP_SIZE} of a faction are queued for the same dungeon, they run it together: drops go to whoever would wear them now, else to a random member, and finishing turns in everyone's quests for it. Run pages list only the loot that was kept.`),
     el('ul', { class: 'dungeon-list' }, DUNGEONS.map((d) => renderDungeonRow(d, account))),
     el('h3', { class: 'dungeon-runs-title' }, 'Recent runs'),
     runs.length
@@ -66,7 +66,6 @@ function renderDungeonRow(dungeon, account) {
 }
 
 function renderRunRow(run) {
-  const needs = run.loot.filter((l) => l.need).length
   return el('li', {},
     el('a', { class: `encounter-row ${resultClass(run)}`, href: `#/dungeons/${run.id}` },
       el('span', { class: 'encounter-shape' }, run.success ? 'Clear' : 'Wipe'),
@@ -77,7 +76,7 @@ function renderRunRow(run) {
           runLength(run.seconds),
           `${run.bosses} of ${getDungeon(run.dungeon).bosses.length} bosses`,
           plural(questCount(run), 'quest'),
-          needs && plural(needs, 'upgrade'),
+          run.loot.length && `${plural(run.loot.length, 'item')} kept`,
           run.meters?.deaths.length && plural(run.meters.deaths.length, 'death'),
         ].filter(Boolean).join(' · ')),
       ),
@@ -123,11 +122,11 @@ function renderRun(run, account) {
             const item = getItem(l.item)
             return el('li', { class: `slot slot-bottom q-${QUALITIES[item.quality]}`, tabindex: 0 },
               el('span', { class: 'item-name' }, item.name),
-              el('span', { class: 'loot-source' }, ` from ${l.from} · ${l.need ? 'Need' : 'Greed'}: ${run.members[l.to].name}`),
+              el('span', { class: 'loot-source' }, ` from ${l.from} · ${run.members[l.to].name}, ${KEPT_TEXT[l.kept]}`),
               renderTooltip(item),
             )
           }))
-          : el('p', { class: 'empty' }, 'Nothing of note dropped.'),
+          : el('p', { class: 'empty' }, 'Nothing kept.'),
       ),
     ),
     run.meters

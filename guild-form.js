@@ -1,14 +1,18 @@
-import Guild, { GUILD_NAME_MAX } from './guild.js'
+import Guild, { GUILD_NAME_MAX, GUILD_SIZE } from './guild.js'
+import { DAILY_CHARACTERS } from './account.js'
 import { badge, el } from './dom.js'
 import { FACTIONS, RACES } from './data.js'
 import { field, pickerField, tile } from './character-form.js'
 
 // Renders the create-guild screen. Calls onSave({ guildName, faction }) with valid values. An account may have
 // one guild per faction (see Account.canFoundGuild), so factions that already have one can't be picked.
-export function renderGuildForm({ account, onSave }) {
+// A new account (no guilds) is sent here first; see render in interface.js.
+export function renderGuildForm({ account, onSave, onLoadFromFile }) {
+  const first = account.guilds.length === 0
   const header = el('div', { class: 'view-header' },
     el('h2', { id: 'view-title' }, 'Create Guild'),
-    el('p', { class: 'field-hint' }, 'A guild is Alliance or Horde, and only characters of that faction can join it. You can have one guild of each faction. The name and faction can\'t be changed later.'),
+    first && el('p', { class: 'welcome' }, 'Welcome! Create your first guild to get started, or load a save file.'),
+    el('p', { class: 'field-hint' }, `A guild is Alliance or Horde, and only characters of that faction can join it. You can have one guild of each faction, with up to ${GUILD_SIZE} characters each, and create ${DAILY_CHARACTERS} characters per faction each day (the count resets at midnight US Eastern). The name and faction can't be changed later.`),
   )
   const open = FACTIONS.filter((f) => account.canFoundGuild(f))
   if (open.length === 0) {
@@ -80,7 +84,9 @@ export function renderGuildForm({ account, onSave }) {
       pickerField('faction', 'Faction', factionPicker),
       el('div', { class: 'form-actions' },
         el('button', { type: 'submit', class: 'button primary' }, 'Create Guild'),
-        el('a', { class: 'button', href: '#/roster' }, 'Cancel'),
+        first
+          ? el('button', { type: 'button', class: 'button', onclick: onLoadFromFile }, 'Load from file')
+          : el('a', { class: 'button', href: '#/roster' }, 'Cancel'),
       ),
     ),
     el('aside', { class: 'preview', 'aria-label': 'Preview' },

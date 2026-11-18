@@ -75,8 +75,17 @@ getter.setWanted(PADS)
 getter.equipBest([PADS])
 check('got it: kept and not wanted', getter.wanted === null && getter.kept[0] === PADS && W.owns(getter, PADS))
 check('got it: can\'t want what it has', !getter.setWanted(PADS))
-getter.finishDungeon({ xp: 0, copper: 0, found: [{ item: PADS, source: 'Mutanus the Devourer' }], quests: [], wornBefore: new Set() }, start)
+getter.finishDungeon({ xp: 0, copper: 0, found: [{ item: PADS, source: 'Mutanus the Devourer', place: 'Wailing Caverns' }], quests: [], wornBefore: new Set() }, start)
 check('got it: loot log says wanted', getter.lootLog[0]?.item === PADS && getter.lootLog[0].wanted === true)
+check('got it: loot log and origins say where and when', getter.lootLog[0]?.place === 'Wailing Caverns' && getter.origins[PADS]?.source === 'Mutanus the Devourer' && getter.origins[PADS].place === 'Wailing Caverns' && getter.origins[PADS].at === start, JSON.stringify(getter.origins))
+{
+  const page = renderCharacterSheet({ character: getter, onDelete() {}, onQueue() {}, onLeaveQueue() {}, onWant() {} })
+  const logText = page.querySelector('.loot-log li .loot-source')?.textContent ?? ''
+  check('loot log row says where and when', logText.includes('from Mutanus the Devourer in Wailing Caverns') && logText.includes(' ago'), logText)
+  const worn = Object.values(getter.equipment).includes(PADS)
+  const tip = [...page.querySelectorAll('.paper-doll .tt-origin')].map((e) => e.textContent)
+  check('equipped tooltip says where it dropped', !worn || tip.some((t) => t.startsWith('Dropped from Mutanus the Devourer in Wailing Caverns')), JSON.stringify(tip))
+}
 getter.equipBest()
 check('kept survives re-equipping', getter.kept.includes(PADS) && !getter.bag.includes(PADS))
 
@@ -90,6 +99,17 @@ const loaded = Account.fromJSON(json, start)
 const [s2, g2] = loaded.characters
 check('save: wanted and kept survive', s2.wanted === PADS && JSON.stringify(s2.kept) === JSON.stringify(saver.kept) && g2.kept.includes(PADS) && g2.wanted === null)
 check('save: loot log flag survives', g2.lootLog[0]?.wanted === true)
+check('save: origins survive', JSON.stringify(g2.origins) === JSON.stringify(getter.origins), JSON.stringify(g2.origins))
+{
+  const old = JSON.parse(JSON.stringify(json))
+  delete old.guilds[0].characters[1].origins
+  const o = Account.fromJSON(old, start).characters[1]
+  check('save: old saves get origins from the loot log', o.origins[PADS]?.source === 'Mutanus the Devourer', JSON.stringify(o.origins))
+  const bad = JSON.parse(JSON.stringify(json))
+  bad.guilds[0].characters[1].origins = { [PADS]: { source: 5, at: 'x' }, 99999999: { source: 'X', at: 1 }, 6505: { source: 'Not held', at: 1 } }
+  const b = Account.fromJSON(bad, start).characters[1]
+  check('save: bad origins dropped', !b.origins[99999999] && !b.origins[6505] && b.origins[PADS]?.source === 'Mutanus the Devourer', JSON.stringify(b.origins))
+}
 const tampered = JSON.parse(JSON.stringify(json))
 tampered.guilds[0].characters[0].wanted = 99999999
 tampered.guilds[0].characters[0].kept = ['x', 99999999, ...Array(20).fill(6505)]

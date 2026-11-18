@@ -17,8 +17,8 @@ let failed = 0
 const check = (ok, msg) => { console.log(ok ? 'PASS' : 'FAIL', msg); if (!ok) failed++ }
 const tick = () => new Promise((r) => setTimeout(r, 20))
 
-const { createDefaultAccount } = await import(ROOT + 'storage.js')
-const save = JSON.parse(JSON.stringify(createDefaultAccount()))
+const { sampleAccount } = await import('./helpers.mjs')
+const save = JSON.parse(JSON.stringify(sampleAccount()))
 const c = save.guilds[0].characters[0]
 c.characterLevel = 40
 delete c.talents // a save from before talents

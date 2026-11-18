@@ -201,6 +201,17 @@ main:has(.farm) {
   margin-top: 2rem;
 }
 
+.site-footer {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1rem;
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
 /* Buttons */
 
 .modal {
@@ -455,6 +466,7 @@ main:has(.farm) {
 .badge-sanctuary { --badge-color: var(--healer); }
 .badge-wanted { --badge-color: var(--accent); }
 .badge-top-damage { --badge-color: var(--accent); }
+.badge-alpha { --badge-color: var(--dps); }
 
 .card-link {
   height: 100%;
@@ -512,6 +524,10 @@ main:has(.farm) {
 .field-hint {
   font-size: 0.8rem;
   color: var(--text-muted);
+}
+
+.welcome {
+  margin: 0.25rem 0;
 }
 
 .field-error {
@@ -1167,6 +1183,10 @@ main:has(.character-sheet) {
 
 .tt-description {
   color: #ffd100;
+}
+
+.tt-origin {
+  color: var(--text-muted);
 }
 
 .sheet-stats {

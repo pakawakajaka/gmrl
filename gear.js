@@ -54,6 +54,8 @@ export function rollSuffix(id, random = Math.random) {
 export const getQuest = (id) => (Object.hasOwn(QUESTS, id) ? QUESTS[id] : Object.hasOwn(DUNGEON_QUESTS, id) ? DUNGEON_QUESTS[id] : undefined)
 
 export const QUALITIES = ['poor', 'common', 'uncommon', 'rare', 'epic']
+// Why a character kept an item it got (see Character.keptAs): worn, kept for being wanted, or in the bag.
+export const KEPT_AS = ['equipped', 'wanted', 'later', 'off-spec']
 
 // Paper-doll slots in Classic character-sheet order.
 export const SLOTS = {

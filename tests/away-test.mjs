@@ -10,7 +10,7 @@ const html = readFileSync(ROOT + 'main.html', 'utf8').replace(/<script[^>]*><\/s
 globalThis.setInterval = () => 1
 
 const { default: Account, MAX_AWAY_HOURS } = await import(ROOT + 'account.js')
-const { createDefaultAccount } = await import(ROOT + 'storage.js')
+const { sampleAccount } = await import('./helpers.mjs')
 
 let fails = 0
 const check = (label, ok, extra = '') => { console.log(`${ok ? 'PASS' : 'FAIL'} ${label} ${extra}`); if (!ok) fails++ }
@@ -20,7 +20,7 @@ const HOUR = 3600e3
 const now = Date.now() + HOUR
 const sendAll = (acc) => { for (const c of acc.characters) acc.sendToZone(c.id, c.faction === 'Horde' ? 'Durotar' : 'Elwynn Forest', acc.lastTick) }
 const xpAfter = (hoursAway) => {
-  const acc = createDefaultAccount()
+  const acc = sampleAccount()
   sendAll(acc)
   acc.lastTick = now - hoursAway * HOUR
   const random = Math.random
@@ -43,7 +43,7 @@ async function noticesAfter(secondsAgo) {
   const w = new JSDOM(html, { url: 'http://localhost/main.html#/roster', pretendToBeVisual: true }).window
   w.scrollTo = () => {}
   Object.assign(globalThis, { window: w, document: w.document, location: w.location, localStorage: w.localStorage })
-  const acc = createDefaultAccount()
+  const acc = sampleAccount()
   acc.lastTick = Date.now() - secondsAgo * 1000
   w.localStorage.setItem('gmrl.account', JSON.stringify(acc))
   await import(`${ROOT}interface.js?page=${++pages}`)

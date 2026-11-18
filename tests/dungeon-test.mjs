@@ -160,11 +160,15 @@ if (goodRun) {
   }))
   check('clear counted', run.members.every((m) => acc.getCharacter(m.id).dungeonClears[run.dungeon] >= 1))
   check('loot went to members', run.loot.every((l) => l.to >= 0 && l.to < 5))
-  check('need rolls happened', run.loot.some((l) => l.need), `${run.loot.length} drops`)
-  check('need winners can use it', run.loot.filter((l) => l.need).every((l) => {
+  check('kept loot logged', run.loot.some((l) => l.kept === 'equipped'), `${run.loot.length} kept`)
+  check('run loot is only kept items, once each', run.loot.every((l) => ['equipped', 'wanted', 'later', 'off-spec'].includes(l.kept) && run.loot.filter((o) => o.item === l.item && o.to === l.to).length === 1), JSON.stringify(run.loot))
+  check('loot logs are only kept items', acc.characters.every((c) => c.lootLog.every((e) => ['equipped', 'wanted', 'later', 'off-spec'].includes(e.kept))))
+  check('run loot logged with the dungeon as place, origins kept', run.loot.every((l) => {
     const c = acc.getCharacter(run.members[l.to].id)
-    return c.lootLog.some((e) => e.item === l.item) || Object.values(c.equipment).includes(l.item) || c.bag.includes(l.item) || true
-  }))
+    return c.lootLog.some((e) => e.item === l.item && e.place === run.dungeon) || !c.heldItems().has(l.item) || c.origins[l.item]?.place === run.dungeon
+  }) && acc.characters.every((c) => Object.values(c.equipment).some((id) => c.origins[id]?.place)))
+  const oldRun = D.restoreRun({ ...JSON.parse(JSON.stringify(run)), loot: [{ item: run.loot[0]?.item ?? 6505, to: 0, need: true, from: 'X' }, { item: run.loot[0]?.item ?? 6505, to: 1, need: false, from: 'X' }] })
+  check('old runs: need wins show as equipped, greed wins dropped', oldRun.loot.length === 1 && oldRun.loot[0].kept === 'equipped' && oldRun.loot[0].to === 0, JSON.stringify(oldRun.loot))
   check('errands in tick result', result.errands.every((e) => e.character && Array.isArray(e.quests)))
   check('run seconds sane', run.seconds >= 60 * 10 && run.seconds <= 3 * 60 * D.getDungeon(run.dungeon).minutes, String(run.seconds))
 

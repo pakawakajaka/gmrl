@@ -1,6 +1,6 @@
 {
   "name": "gmrl",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Guild Master Raid Leader",
   "main": "interface.js",
   "scripts": {

@@ -1,22 +1,39 @@
+import Account, { DAILY_CHARACTERS } from './account.js'
 import Character from './character.js'
-import { badge, el } from './dom.js'
+import { GUILD_SIZE } from './guild.js'
+import { badge, el, formatDuration } from './dom.js'
 import { CLASSES, FACTIONS, MIN_LEVEL, RACES, ROLES, classIcon } from './data.js'
 
 const FIELD_ORDER = ['characterName', 'guildId', 'characterRace', 'characterClass', 'characterSpec', 'characterRole']
 
+// Why no new character can join the guild right now, or null if one can: it's full (see GUILD_SIZE) or its
+// faction has used up today's new characters (see Account.createsLeft).
+export function cantCreateReason(account, guild, now = Date.now()) {
+  if (guild.isFull) return `<${guild.guildName}> is full (${GUILD_SIZE} characters).`
+  if (account.createsLeft(guild.faction, now) > 0) return null
+  const wait = formatDuration((Account.nextCreateReset(now) - now) / 3600e3)
+  return `You've created ${DAILY_CHARACTERS} ${guild.faction} characters today. More after the midnight reset (US Eastern), in ${wait}.`
+}
+
 // Renders the create screen, with `guildId` (if any) preselected. Characters can't be edited after creation.
+// Guilds that can't take a new character (see cantCreateReason) can't be picked.
 export function renderCharacterForm({ account, guildId, onSave }) {
-  if (account.guilds.length === 0) {
+  const joinable = (g) => g && !cantCreateReason(account, g)
+  if (!account.guilds.some(joinable)) {
     return el('section', { class: 'character-editor', 'aria-labelledby': 'view-title' },
       el('div', { class: 'view-header' }, el('h2', { id: 'view-title' }, 'Create Character')),
-      el('p', { class: 'empty' }, 'Characters belong to a guild. ', el('a', { href: '#/create-guild' }, 'Create a guild'), ' first.'),
+      account.guilds.length
+        ? el('p', { class: 'empty' }, account.guilds.map((g) => `${cantCreateReason(account, g)} `),
+          FACTIONS.some((f) => account.canFoundGuild(f)) && [el('a', { href: '#/create-guild' }, 'Create a guild'), ' of the other faction, or '],
+          el('a', { href: '#/roster' }, 'back to roster'), '.')
+        : el('p', { class: 'empty' }, 'Characters belong to a guild. ', el('a', { href: '#/create-guild' }, 'Create a guild'), ' first.'),
     )
   }
   const level = MIN_LEVEL // new characters always start at level 1
 
   // Guild, race, class, spec and role can be picked in any order; a pick clears whatever it conflicts with.
   const picks = {
-    guildId: account.getGuild(guildId) ? guildId : '',
+    guildId: joinable(account.getGuild(guildId)) ? guildId : '',
     characterRace: '',
     characterClass: '',
     characterSpec: '',
@@ -33,9 +50,16 @@ export function renderCharacterForm({ account, guildId, onSave }) {
       const guilds = account.guilds.filter((g) => g.faction === faction)
       return guilds.length > 0 && el('div', { class: `faction faction-${faction.toLowerCase()}` },
         el('p', { class: 'faction-name' }, faction),
-        el('div', { class: 'tile-grid' }, guilds.map((g) => tile('guildId', g.id, null,
-          el('span', { class: 'tile-text' }, g.guildName,
-            el('small', {}, `${g.characters.length} member${g.characters.length === 1 ? '' : 's'}`))))),
+        el('div', { class: 'tile-grid' }, guilds.map((g) => {
+          const left = account.createsLeft(g.faction)
+          const room = g.isFull ? 'full' : left ? `${left} more today` : 'none left today'
+          const label = tile('guildId', g.id, null,
+            el('span', { class: 'tile-text' }, g.guildName,
+              el('small', {}, `${g.characters.length}/${GUILD_SIZE} members, ${room}`)))
+          label.title = cantCreateReason(account, g) ?? ''
+          label.querySelector('input').disabled = !joinable(g)
+          return label
+        })),
       )
     })),
     el('p', { class: 'field-hint', style: { 'margin-top': '0.5rem' } }, 'Only races of the guild\'s faction can join it. ',
@@ -81,6 +105,8 @@ export function renderCharacterForm({ account, guildId, onSave }) {
     const race = RACES[p.characterRace]
     const cls = CLASSES[p.characterClass]
     const guild = account.getGuild(p.guildId)
+    if (guild && !joinable(guild)) return false
+    if (race && !account.guilds.some((g) => g.faction === race.faction && joinable(g))) return false
     if (guild && race && race.faction !== guild.faction) return false
     if (race && cls && !race.classes.includes(p.characterClass)) return false
     if (cls && p.characterRole && !cls.roles.includes(p.characterRole)) return false
@@ -97,7 +123,7 @@ export function renderCharacterForm({ account, guildId, onSave }) {
     }
     const race = RACES[p.characterRace]
     if (race && !p.guildId) {
-      const fitting = account.guilds.filter((g) => g.faction === race.faction)
+      const fitting = account.guilds.filter((g) => g.faction === race.faction && joinable(g))
       if (fitting.length === 1) p.guildId = fitting[0].id
     }
     if (race && p.characterClass && !race.classes.includes(p.characterClass)) {
@@ -183,11 +209,13 @@ export function renderCharacterForm({ account, guildId, onSave }) {
     if (!errors.characterName && account.isNameTaken(values.characterName)) {
       errors.characterName = `You already have a character named ${Character.formatName(values.characterName)}.`
     }
-    if (!account.getGuild(chosenGuild)) {
+    const chosen = account.getGuild(chosenGuild)
+    if (!joinable(chosen)) {
       const faction = RACES[values.characterRace]?.faction
-      errors.guildId = faction && !account.guilds.some((g) => g.faction === faction)
+      const home = chosen ?? (faction && account.guilds.find((g) => g.faction === faction))
+      errors.guildId = faction && !home
         ? `You have no ${faction} guild yet. Create one first.`
-        : 'Choose a guild.'
+        : (home && cantCreateReason(account, home)) || 'Choose a guild.'
     }
 
     for (const key of FIELD_ORDER) showError(key, errors[key])
@@ -229,7 +257,7 @@ export function renderCharacterForm({ account, guildId, onSave }) {
   return el('section', { class: 'character-editor', 'aria-labelledby': 'view-title' },
     el('div', { class: 'view-header' },
       el('h2', { id: 'view-title' }, 'Create Character'),
-      el('p', { class: 'field-hint' }, `New characters start at level ${MIN_LEVEL}. Send them farming to level up. Name, guild, race, class, spec and role can't be changed later.`),
+      el('p', { class: 'field-hint' }, `New characters start at level ${MIN_LEVEL}. Send them farming to level up. You can create ${DAILY_CHARACTERS} characters per faction each day. Name, guild, race, class, spec and role can't be changed later.`),
     ),
     form,
   )

@@ -2,6 +2,7 @@ import { FACTIONS } from './data.js'
 
 const NAME_PATTERN = /^[A-Za-z]+( [A-Za-z]+)*$/
 export const GUILD_NAME_MAX = 24
+export const GUILD_SIZE = 10 // most characters a guild can have; see Account.addCharacter
 
 // A guild of one faction. It owns its characters; every character is in exactly one guild.
 export default class Guild {
@@ -14,6 +15,11 @@ export default class Guild {
 
   has(characterId) {
     return this.characters.some((c) => c.id === characterId)
+  }
+
+  // No room for a new character. Saves from before the cap may hold more; they keep them.
+  get isFull() {
+    return this.characters.length >= GUILD_SIZE
   }
 
   // The guild's money: its characters' gold added up, in copper. Worked out on each call; the guild stores none.

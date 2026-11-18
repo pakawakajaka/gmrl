@@ -22,11 +22,11 @@ async function openPage(saved) {
 }
 
 const { SAVE_VERSION } = await import(ROOT + 'account.js')
-const { createDefaultAccount } = await import(ROOT + 'storage.js')
+const { sampleAccount } = await import('./helpers.mjs')
 
 let fails = 0
 const check = (label, ok, extra = '') => { console.log(`${ok ? 'PASS' : 'FAIL'} ${label} ${extra}`); if (!ok) fails++ }
-const newer = JSON.stringify({ ...JSON.parse(JSON.stringify(createDefaultAccount())), saveVersion: SAVE_VERSION + 1, futureField: 'keep me' })
+const newer = JSON.stringify({ ...JSON.parse(JSON.stringify(sampleAccount())), saveVersion: SAVE_VERSION + 1, futureField: 'keep me' })
 
 // An old cached page opens a save made by the update.
 let w = await openPage(newer)
@@ -40,7 +40,10 @@ check('still showing the prompt after navigating', title() === 'Update available
 
 // A page is open when another tab loads the update and saves.
 w = await openPage(null)
-check('current save plays normally', title() === 'All Characters', title())
+check('new player plays normally', title() === 'Create Guild', title())
+const version = JSON.parse(readFileSync(ROOT + 'package.json', 'utf8')).version
+const footer = (s) => w.document.querySelector(`.site-footer ${s}`)?.textContent
+check('footer: Alpha and the version', footer('.badge-alpha') === 'Alpha' && footer('#version') === `v${version}`, footer('#version'))
 w.dispatchEvent(new w.Event('pagehide'))
 const current = w.localStorage.getItem('gmrl.account')
 check('saves start with the version', current?.startsWith(`{"saveVersion":${SAVE_VERSION},`), current?.slice(0, 20))

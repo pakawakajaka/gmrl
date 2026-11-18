@@ -17,12 +17,11 @@ let clock = realNow()
 Date.now = () => clock
 
 const { default: Account } = await import(ROOT + 'account.js')
-const { createDefaultAccount } = await import(ROOT + 'storage.js')
-const { accountOf, addTo, savedCharacters } = await import('./helpers.mjs')
+const { accountOf, addTo, savedCharacters, sampleAccount } = await import('./helpers.mjs')
 const { ZONES } = await import(ROOT + 'zones.js')
 
 // --- Model checks
-const a = createDefaultAccount()
+const a = sampleAccount()
 const [troll, paka] = a.characters
 console.log('zones:', ZONES.length)
 console.log('send L1 Troll to Elwynn (Alliance):', a.sendToZone(troll.id, 'Elwynn Forest'))

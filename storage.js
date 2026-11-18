@@ -1,19 +1,7 @@
 import Account, { SAVE_VERSION } from './account.js'
-import Character from './character.js'
-import Guild from './guild.js'
 
 export const STORAGE_KEY = 'gmrl.account'
-
-export function createDefaultAccount() {
-  const trollwarr = new Character({ characterName: 'Trollwarrior', characterClass: 'Warrior', characterSpec: 'Protection', characterRace: 'Troll', characterRole: 'Tank' })
-  const paka = new Character({ characterName: 'Pakawakajaka', characterClass: 'Shaman', characterSpec: 'Restoration', characterRace: 'Tauren', characterRole: 'Healer' })
-  const bassor = new Character({ characterName: 'Bassor', characterClass: 'Paladin', characterSpec: 'Retribution', characterRace: 'Human', characterRole: 'DPS' })
-
-  return new Account('bassor', [
-    new Guild({ guildName: 'TYMF', faction: 'Horde', characters: [trollwarr, paka] }),
-    new Guild({ guildName: 'South Bank Satellites', faction: 'Alliance', characters: [bassor] }),
-  ])
-}
+export const SAVE_FILE = 'gmrl-save.json'
 
 // How many characters the save data holds, in either save format (see Account.fromJSON).
 function savedCharacterCount(data) {
@@ -22,23 +10,27 @@ function savedCharacterCount(data) {
   return guilds.reduce((sum, g) => sum + (Array.isArray(g?.characters) ? g.characters.length : 0), 0)
 }
 
-// Returns the saved account (or the defaults) and how many saved characters were invalid and dropped,
+// Returns the saved account (or a new one with no guilds) and how many saved characters were invalid and dropped,
 // e.g. ones made before the game became Classic-only. A save from a newer version of the game (say, an old
 // cached copy of the page) gives `newer: true` and no account: loading it would drop what this version
 // doesn't know about.
 export function loadAccount() {
   try {
     const saved = localStorage.getItem(STORAGE_KEY)
-    if (saved) {
-      const data = JSON.parse(saved)
-      if (Number(data.saveVersion) > SAVE_VERSION) return { account: null, dropped: 0, newer: true }
-      const account = Account.fromJSON(data)
-      return { account, dropped: savedCharacterCount(data) - account.characters.length, newer: false }
-    }
+    if (saved) return readSave(saved)
   } catch (error) {
-    console.warn('Saved data could not be read; using defaults.', error)
+    console.warn('Saved data could not be read; starting a new account.', error)
   }
-  return { account: createDefaultAccount(), dropped: 0, newer: false }
+  return { account: new Account(''), dropped: 0, newer: false }
+}
+
+// Reads save data from JSON text, as loadAccount returns it. Throws if the text isn't a save.
+export function readSave(text) {
+  const data = JSON.parse(text)
+  if (!data || typeof data !== 'object' || (!Array.isArray(data.guilds) && !Array.isArray(data.characters))) throw new Error('Not a save.')
+  if (Number(data.saveVersion) > SAVE_VERSION) return { account: null, dropped: 0, newer: true }
+  const account = Account.fromJSON(data)
+  return { account, dropped: savedCharacterCount(data) - account.characters.length, newer: false }
 }
 
 // The version of stored save data, from the start of the JSON (Account.toJSON writes it first); 0 if none.
@@ -58,14 +50,53 @@ export function saveAccount(account) {
   return true
 }
 
-// Asks the dev server (dev-server.js) to write the save data into the project folder. Returns the file name.
+// Save and load file pickers share an id, so the browser opens each in the folder used last time (by either).
+const PICKER = { id: 'gmrl-save', types: [{ description: 'Save file', accept: { 'application/json': ['.json'] } }] }
+const cancelled = (error) => error?.name === 'AbortError'
+
+// Writes the save data to a file. Where the browser has file pickers (Chrome, Edge), the player picks where;
+// elsewhere it's downloaded as SAVE_FILE. Resolves to { name, picked }, or null if the player cancelled.
 export async function saveAccountToFile(account) {
-  const response = await fetch('/api/save', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(account),
+  const json = JSON.stringify(account, null, 2)
+  if (window.showSaveFilePicker) {
+    let handle
+    try {
+      handle = await window.showSaveFilePicker({ ...PICKER, suggestedName: SAVE_FILE })
+    } catch (error) {
+      if (cancelled(error)) return null
+      throw error
+    }
+    const writable = await handle.createWritable()
+    await writable.write(json)
+    await writable.close()
+    return { name: handle.name, picked: true }
+  }
+  const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }))
+  const link = Object.assign(document.createElement('a'), { href: url, download: SAVE_FILE })
+  link.click()
+  setTimeout(() => URL.revokeObjectURL(url))
+  return { name: SAVE_FILE, picked: false }
+}
+
+// Lets the player pick a save file. Resolves to { name, text }, or null if the player cancelled.
+export async function pickSaveFile() {
+  if (window.showOpenFilePicker) {
+    try {
+      const [handle] = await window.showOpenFilePicker(PICKER)
+      const file = await handle.getFile()
+      return { name: file.name, text: await file.text() }
+    } catch (error) {
+      if (cancelled(error)) return null
+      throw error
+    }
+  }
+  return new Promise((resolve) => {
+    const input = Object.assign(document.createElement('input'), { type: 'file', accept: '.json,application/json' })
+    input.addEventListener('change', async () => {
+      const file = input.files[0]
+      resolve(file ? { name: file.name, text: await file.text() } : null)
+    })
+    input.addEventListener('cancel', () => resolve(null))
+    input.click()
   })
-  const result = await response.json().catch(() => ({}))
-  if (!response.ok) throw new Error(result.error ?? `Server responded ${response.status}.`)
-  return result.file
 }

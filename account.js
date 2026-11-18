@@ -6,7 +6,7 @@ import { startZone } from './leveling.js'
 import { encounterRecord, restoreEncounter, worldPvp } from './pvp.js'
 import { RUN_LOG_SIZE, RUN_METER_SIZE, autoQueue, formGroups, joinQueue, leaveQueue, restoreRun } from './dungeons.js'
 import { honorResets } from './honor.js'
-import { periodOf, periodStart } from './reset.js'
+import { dayOf, dayStart, periodOf, periodStart } from './reset.js'
 import { baseId } from './gear.js'
 
 const ID_PATTERN = /^[\w-]+$/
@@ -15,6 +15,7 @@ const SLICE_HOURS = 1 // long catch-ups run in slices so PvP sees levels change 
 export const MAX_AWAY_HOURS = 30 // time away beyond this isn't paid out
 export const ENCOUNTER_LOG_SIZE = 50
 export const ENCOUNTER_DETAIL_SIZE = 10 // the newest encounters that keep their combat log
+export const DAILY_CHARACTERS = 5 // new characters per faction per day; the count resets at midnight (reset.js)
 // Bump when the save format changes, and upgrade older saves in fromJSON.
 // 1: guilds hold characters. Saves without a saveVersion are from before versioning: either that format or
 //    the older one (account-wide characters, guilds listing characterIds).
@@ -25,9 +26,9 @@ export const ENCOUNTER_DETAIL_SIZE = 10 // the newest encounters that keep their
 // 4: characters can want an item (wanted) and keep what they got by wanting it (kept), and remember the
 //    dungeon they're back from (restingAfter). Older saves want nothing and rest after nothing.
 // 5: mounts are bought with gold (mount). Older saves ride from level 40, with no epic mount yet.
-export const SAVE_VERSION = 5
-// Accounts that get dev tools (e.g. Save to file). Not a security boundary: the save endpoint is dev-server only.
-const DEV_ACCOUNT_IDS = new Set(['379d1f11-f7ac-4e09-ab3c-b51930ba2aa8'])
+// 6: no format change. Briefly, saves held an account password; that was reverted, but saves written then are
+//    version 6, and a lower version would refuse them as newer. A stray `password` field is ignored.
+export const SAVE_VERSION = 6
 
 // Drops the combat log from all but the newest encounters.
 function trimLogs(encounters) {
@@ -41,22 +42,19 @@ function trimMeters(runs) {
 
 // Account -> guilds -> characters. Each guild is of one faction and every character is in exactly one guild.
 export default class Account {
-  constructor(accountName, guilds = [], lastTick = Date.now(), encounters = [], dungeonRuns = [], id = crypto.randomUUID()) {
+  constructor(accountName, guilds = [], lastTick = Date.now(), encounters = [], dungeonRuns = [], id = crypto.randomUUID(), created = null) {
     this.id = id
     this.accountName = accountName
     this.guilds = guilds
     this.lastTick = lastTick // ms timestamp up to which farming has been paid out
     this.encounters = encounters // world PvP, newest first: see encounterRecord in pvp.js
     this.dungeonRuns = dungeonRuns // newest first: see runDungeon in dungeons.js
+    this.created = created // characters created today: { day (reset.js dayOf), Horde, Alliance }, or null
   }
 
   // Every character in every guild. A getter, so it isn't saved twice.
   get characters() {
     return this.guilds.flatMap((g) => g.characters)
-  }
-
-  get devMode() {
-    return DEV_ACCOUNT_IDS.has(this.id)
   }
 
   toJSON() {
@@ -194,7 +192,7 @@ export default class Account {
     return this.guilds.some((g) => g.guildName.toLowerCase() === wanted)
   }
 
-  // For alpha testing an account may have one guild per faction. Later it will be one guild in all.
+  // An account may have one guild per faction.
   canFoundGuild(faction) {
     return !this.guilds.some((g) => g.faction === faction)
   }
@@ -210,18 +208,36 @@ export default class Account {
     return true
   }
 
+  // How many more characters of the faction can be created today (see DAILY_CHARACTERS). Deleting a
+  // character doesn't give one back.
+  createsLeft(faction, now = Date.now()) {
+    const made = this.created?.day === dayOf(now) ? this.created[faction] ?? 0 : 0
+    return Math.max(0, DAILY_CHARACTERS - made)
+  }
+
+  // The ms time the daily character count resets.
+  static nextCreateReset(now = Date.now()) {
+    return dayStart(dayOf(now) + 1)
+  }
+
   // Adds a new character to the guild. New characters always start at level 1 with no XP or gear, farming
   // in their race's starting zone. Characters can't be edited after creation. Returns false if there's no
-  // such guild or it's of the other faction.
+  // such guild, it's of the other faction, it's full (see GUILD_SIZE) or its faction has used up today's
+  // new characters (see createsLeft).
   addCharacter(character, guildId, now = Date.now()) {
     const guild = this.getGuild(guildId)
-    if (!guild || guild.faction !== character.faction) return false
+    if (!guild || guild.faction !== character.faction || guild.isFull) return false
+    if (this.createsLeft(guild.faction, now) === 0) return false
     this.tick(now)
     character.characterLevel = MIN_LEVEL
     character.characterXp = 0
     character.talents = {}
     character.zone = startZone(character)
-    return guild.add(character)
+    if (!guild.add(character)) return false
+    const day = dayOf(now)
+    if (this.created?.day !== day) this.created = { day, Horde: 0, Alliance: 0 }
+    this.created[guild.faction]++
+    return true
   }
 
   deleteCharacter(id) {
@@ -238,7 +254,7 @@ export default class Account {
       const c = { ...saved, characterSpec: saved.characterSpec ?? defaultSpec(saved.characterClass, saved.characterRole) }
       if (Object.keys(Character.validate(c)).length > 0) return null
       seen.add(c.id)
-      const character = new Character({ ...c, characterXp: 0, zone: null, copper: 0, spells: undefined, talents: {}, equipment: {}, bag: [], questsDone: [], questLog: {}, timeBank: 0, lootLog: [], honorableKills: 0, honor: 0, honorToday: null, honorPeriod: null, rankPoints: 0, highestRank: 0, honorLastPeriod: null, pvpKills: 0, pvpDeaths: 0, pvpLog: [], pvpReadyAt: 0, hearthReadyAt: 0, dungeonQuests: [], dungeonQueue: null, dungeonClears: {}, queueDeclined: null, restingAfter: null, wanted: null, kept: [], mount: null })
+      const character = new Character({ ...c, characterXp: 0, zone: null, copper: 0, spells: undefined, talents: {}, equipment: {}, bag: [], questsDone: [], questLog: {}, timeBank: 0, lootLog: [], honorableKills: 0, honor: 0, honorToday: null, honorPeriod: null, rankPoints: 0, highestRank: 0, honorLastPeriod: null, pvpKills: 0, pvpDeaths: 0, pvpLog: [], pvpReadyAt: 0, hearthReadyAt: 0, dungeonQuests: [], dungeonQueue: null, dungeonClears: {}, queueDeclined: null, restingAfter: null, wanted: null, kept: [], origins: {}, mount: null })
       const xp = Number(c.characterXp)
       if (Number.isFinite(xp) && xp > 0 && xp < character.xpToNextLevel) character.characterXp = xp
       if (!zoneLockReason(character, getZone(c.zone))) character.zone = c.zone
@@ -300,6 +316,11 @@ export default class Account {
     trimLogs(encounters)
     const runs = (Array.isArray(data.dungeonRuns) ? data.dungeonRuns.slice(0, RUN_LOG_SIZE) : []).map(restoreRun).filter(Boolean)
     trimMeters(runs)
+    // Today's character count. Saves from before the daily limit have none, so start the day at zero.
+    const made = (n) => Number.isInteger(n) && n > 0 ? Math.min(n, DAILY_CHARACTERS) : 0
+    const created = data.created && Number.isInteger(data.created.day)
+      ? { day: data.created.day, Horde: made(data.created.Horde), Alliance: made(data.created.Alliance) }
+      : null
     return new Account(
       String(data.accountName),
       guilds,
@@ -307,6 +328,7 @@ export default class Account {
       encounters,
       runs,
       typeof data.id === 'string' && ID_PATTERN.test(data.id) ? data.id : undefined,
+      created,
     )
   }
 }

@@ -15,15 +15,14 @@ globalThis.setInterval = () => {}
 
 const { MAX_LEVEL, RACES, xpToNextLevel } = await import(ROOT + 'data.js')
 const { ZONES } = await import(ROOT + 'zones.js')
-const { createDefaultAccount } = await import(ROOT + 'storage.js')
-const { accountOf, addTo, savedCharacters } = await import('./helpers.mjs')
+const { accountOf, addTo, savedCharacters, sampleAccount } = await import('./helpers.mjs')
 console.log('max level:', MAX_LEVEL, '| xp 59->60:', xpToNextLevel(59), '| xp at 60:', xpToNextLevel(60))
 console.log('races:', Object.keys(RACES).join(', '))
 console.log('zones:', ZONES.length, '| max zone level:', Math.max(...ZONES.map((z) => z.maxLevel)))
-console.log('defaults:', createDefaultAccount().characters.map((c) => `${c.characterName} ${c.characterRace} ${c.characterClass}`).join('; '))
+console.log('sample:', sampleAccount().characters.map((c) => `${c.characterName} ${c.characterRace} ${c.characterClass}`).join('; '))
 
 // Old save: Bassor as a Blood Elf, Trollwarrior level 20 farming in Eversong Woods.
-const old = JSON.parse(JSON.stringify(createDefaultAccount()))
+const old = JSON.parse(JSON.stringify(sampleAccount()))
 savedCharacters(old)[2].characterRace = 'Blood Elf'
 savedCharacters(old)[0].characterLevel = 20
 savedCharacters(old)[0].zone = 'Eversong Woods'

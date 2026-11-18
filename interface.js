@@ -9,15 +9,16 @@ import { renderGuildForm } from './guild-form.js'
 import { renderRoster } from './roster.js'
 import { DEFAULT_SORT } from './sort.js'
 import { renderTalents } from './talents-view.js'
-import { STORAGE_KEY, loadAccount, saveAccount, saveAccountToFile } from './storage.js'
+import { STORAGE_KEY, loadAccount, pickSaveFile, readSave, saveAccount, saveAccountToFile } from './storage.js'
 import { renderWorldPvp, headline } from './world-pvp.js'
 import { renderDungeons, runHeadline } from './dungeons-view.js'
 import { encounterRecord } from './pvp.js'
-import { MAX_AWAY_HOURS } from './account.js'
+import Account, { MAX_AWAY_HOURS } from './account.js'
 
 const APP_TITLE = 'Guild Master Raid Leader'
 const TICK_MS = 1000
 const SAVE_EVERY_MS = 15000
+let createReset = Account.nextCreateReset() // see gameTick
 const MAX_NOTICES = 4
 const MAX_UPGRADE_NOTICES = 3
 const MAX_FIGHT_NOTICES = 2
@@ -44,6 +45,8 @@ function currentView() {
 
 function render() {
   if (stopped) return
+  // A new account has no guilds, so it starts on the create-guild screen.
+  if (account.guilds.length === 0 && currentView().view !== 'create-guild') window.history.replaceState(null, '', '#/create-guild')
   const { view, id, sub } = currentView()
   const character = view === 'character' ? account.getCharacter(id) : undefined
   const focusKey = document.activeElement?.dataset?.focusKey
@@ -51,6 +54,7 @@ function render() {
   const scrolled = new Map([...app.querySelectorAll('[data-scroll-key]')].map((e) => [e.dataset.scrollKey, e.scrollTop]))
 
   document.getElementById('accountName').textContent = account.accountName
+  document.getElementById('accountLabel').hidden = !account.accountName
 
   if (character && sub === 'talents') {
     const change = (fn) => { fn(); save(); render() }
@@ -73,7 +77,7 @@ function render() {
   } else if (view === 'create') {
     app.replaceChildren(renderCharacterForm({ account, guildId: id, onSave: handleSave }))
   } else if (view === 'create-guild') {
-    app.replaceChildren(renderGuildForm({ account, onSave: handleCreateGuild }))
+    app.replaceChildren(renderGuildForm({ account, onSave: handleCreateGuild, onLoadFromFile: handleLoadFromFile }))
   } else if (view === 'farm') {
     app.replaceChildren(renderFarm({
       account,
@@ -98,6 +102,7 @@ function render() {
       onSelectGuild: handleSelectGuild,
       onSort: (key) => { rosterSort = key; render() },
       onSaveToFile: handleSaveToFile,
+      onLoadFromFile: handleLoadFromFile,
     }))
   }
 
@@ -118,8 +123,8 @@ function render() {
 
 // Each guild's gold, whole gold only, in its faction's color. There is no account-wide total.
 function updateGold() {
-  goldEl.replaceChildren(...account.guilds.map((g) =>
-    el('span', { class: `guild-gold faction-${g.faction.toLowerCase()}` }, ' · ', el('strong', {}, g.guildName), ' ',
+  goldEl.replaceChildren(...account.guilds.map((g, i) =>
+    el('span', { class: `guild-gold faction-${g.faction.toLowerCase()}` }, (i > 0 || account.accountName) && ' · ', el('strong', {}, g.guildName), ' ',
       el('span', { class: 'money' }, el('span', { class: 'coin coin-gold' }, `${formatNumber(g.totalGold() / 10000)}g`)))))
 }
 
@@ -257,6 +262,11 @@ function gameTick() {
   } else if (currentView().view === 'farm') {
     updateFarm(app, account)
   }
+  // At the midnight reset more characters can be created; refresh screens that say so, but not a form being filled in.
+  if (Date.now() >= createReset) {
+    createReset = Account.nextCreateReset()
+    if (!app.querySelector('form, dialog[open]')) render()
+  }
   updateGold()
   if (Date.now() - lastSave >= SAVE_EVERY_MS) save()
 }
@@ -321,24 +331,74 @@ function handleDelete(character) {
   location.hash = '#/roster'
 }
 
-async function handleSaveToFile(event) {
-  const button = event.currentTarget
-  button.disabled = true
+async function handleSaveToFile() {
   save()
+  let file
   try {
-    const file = await saveAccountToFile(account)
-    notify(`Saved to ${file} in the project folder.`)
+    file = await saveAccountToFile(account)
   } catch (error) {
-    console.error(error)
-    notify(`Could not save to file: ${error.message} Start the app with "npm start" so the save endpoint is available.`)
-  } finally {
-    button.disabled = false
+    console.error('Could not write the save file.', error)
+    return notify('The save file could not be written.')
   }
+  if (file) notify(file.picked ? `Saved ${file.name}.` : `Saved ${file.name} to your downloads.`)
+}
+
+async function handleLoadFromFile() {
+  let file
+  try {
+    file = await pickSaveFile()
+  } catch (error) {
+    console.error('Could not read the save file.', error)
+    return notify('The file could not be read.')
+  }
+  if (!file || stopped) return
+  let backup
+  try {
+    backup = readSave(file.text)
+  } catch {
+    return notify(`${file.name} isn't a save file.`)
+  }
+  if (backup.newer) return notify(`${file.name} was made by a newer version of the game. Reload the page to update, then load it again.`)
+  if (account.guilds.length === 0) useBackup(file.name, backup)
+  else confirmLoad(file.name, backup)
+}
+
+// e.g. "3 characters in <TYMF> and <South Bank Satellites>"
+function describeAccount(a) {
+  if (a.guilds.length === 0) return 'no guilds'
+  const n = a.characters.length
+  return `${n} character${n === 1 ? '' : 's'} in ${a.guilds.map((g) => `<${g.guildName}>`).join(' and ')}`
+}
+
+function confirmLoad(name, backup) {
+  const played = new Date(backup.account.lastTick).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+  const dialog = el('dialog', { class: 'modal', 'aria-labelledby': 'load-title', 'aria-describedby': 'load-text', onclose: () => dialog.remove() },
+    el('h3', { id: 'load-title' }, `Load ${name}?`),
+    el('p', { id: 'load-text' }, `It has ${describeAccount(backup.account)}, last played ${played}. It replaces your ${describeAccount(account)}. This can't be undone, so save to file first if you want to keep them.`),
+    el('div', { class: 'modal-actions' },
+      el('button', { type: 'button', class: 'button', autofocus: true, onclick: () => dialog.close() }, 'Cancel'),
+      el('button', { type: 'button', class: 'button danger', onclick: () => { dialog.close(); useBackup(name, backup) } }, 'Load save'),
+    ),
+  )
+  app.append(dialog)
+  dialog.showModal()
+}
+
+// Replaces the account with a loaded save. Time since the save was last played pays out as time away.
+function useBackup(name, backup) {
+  account = backup.account
+  selectedGuild = null
+  farmSelectedId = null
+  save()
+  welcomeBack(backup.dropped)
+  notify(`Loaded ${name}.`)
+  if (location.hash === '#/roster') render()
+  else location.hash = '#/roster'
 }
 
 // Pay out anything earned while the page was closed. Saves record time to the last tick, so a second is the
 // shortest time away we can tell.
-function welcomeBack() {
+function welcomeBack(dropped = loaded.dropped) {
   const away = account.tick()
   if (away.awayHours * 3600 >= TICK_MS / 1000) {
     reportFights(away.fights)
@@ -360,8 +420,8 @@ function welcomeBack() {
     notify(`Welcome back! You were away for ${duration}.${capped}${equipped}${fought}${dungeons}`)
     save()
   }
-  if (loaded.dropped > 0) {
-    notify(`${loaded.dropped} saved character${loaded.dropped === 1 ? '' : 's'} ${loaded.dropped === 1 ? 'was' : 'were'} invalid (non-Classic, or no guild of ${loaded.dropped === 1 ? 'its' : 'their'} faction) and removed.`)
+  if (dropped > 0) {
+    notify(`${dropped} saved character${dropped === 1 ? '' : 's'} ${dropped === 1 ? 'was' : 'were'} invalid (non-Classic, or no guild of ${dropped === 1 ? 'its' : 'their'} faction) and removed.`)
     save()
   }
 }

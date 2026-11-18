@@ -83,7 +83,7 @@ function renderDeleteDialog(character, onDelete) {
 }
 
 function renderPaperDoll(character) {
-  const slot = (name, side) => renderSlot(SLOTS[name], getItem(character.equipment[name]), side)
+  const slot = (name, side) => renderSlot(SLOTS[name], getItem(character.equipment[name]), side, character.origins[character.equipment[name]])
   return el('section', { class: 'paper-doll', 'aria-label': 'Equipment' },
     el('ul', { class: 'slot-column left' }, LEFT.map((s) => slot(s, 'left'))),
     el('div', { class: 'doll-center' },
@@ -94,7 +94,7 @@ function renderPaperDoll(character) {
   )
 }
 
-function renderSlot(slotName, item, side) {
+function renderSlot(slotName, item, side, origin) {
   const quality = item ? QUALITIES[item.quality] : 'empty'
   return el('li', { class: `slot slot-${side} q-${quality}`, tabindex: item ? 0 : null, 'aria-label': item ? `${slotName}: ${item.name}` : `${slotName}: empty` },
     renderIcon(item, slotName),
@@ -102,7 +102,7 @@ function renderSlot(slotName, item, side) {
       el('span', { class: 'slot-name' }, slotName),
       el('span', { class: 'item-name' }, item ? item.name : 'Empty'),
     ),
-    item && renderTooltip(item),
+    item && renderTooltip(item, origin),
   )
 }
 
@@ -121,8 +121,8 @@ function maskNames(mask, bits) {
   return names.length === Object.keys(bits).length ? null : names.join(', ')
 }
 
-// Classic-style item tooltip.
-export function renderTooltip(item) {
+// Classic-style item tooltip, with where the character got it (see Character.origins) when given.
+export function renderTooltip(item, origin) {
   const line = (text, cls) => el('p', { class: cls }, text)
   const split = (left, right) => el('p', { class: 'split' }, el('span', {}, left), el('span', {}, right))
   const rows = [line(item.name, `tt-name q-${QUALITIES[item.quality]}`)]
@@ -147,7 +147,16 @@ export function renderTooltip(item) {
   if (item.requiredLevel) rows.push(line(`Requires Level ${item.requiredLevel}`))
   for (const effect of item.effects ?? []) rows.push(line(effect, 'tt-effect'))
   if (item.description) rows.push(line(`"${item.description}"`, 'tt-description'))
+  if (origin) rows.push(line(`${origin.quest ? 'Reward' : 'Dropped'} ${originText(origin)}, ${ago(origin.at)}`, 'tt-origin'))
   return el('div', { class: 'tooltip', role: 'tooltip' }, rows)
+}
+
+const ago = (at) => `${formatDuration((Date.now() - at) / 3600000)} ago`
+
+// Where an item came from: "from Hogger in Elwynn Forest", "from "The Defias Brotherhood" in Westfall".
+function originText({ source, place, quest }) {
+  const from = quest ? `from "${source}"` : source === 'Drop' ? 'from a drop' : `from ${source}`
+  return place && place !== source ? `${from} in ${place}` : from
 }
 
 function renderStats(character, s) {
@@ -698,6 +707,9 @@ function renderDungeons(character, onQueue, onLeaveQueue) {
   )
 }
 
+// How a loot list says why an item was kept (see Character.keptAs).
+export const KEPT_TEXT = { 'equipped': 'equipped', 'wanted': 'wanted', 'later': 'in bag for later levels', 'off-spec': 'in bag for off-spec' }
+
 function renderLoot(character) {
   return el('section', { class: 'sheet-panel', 'aria-label': 'Recent loot' },
     el('h3', {}, 'Recent Loot'),
@@ -706,7 +718,7 @@ function renderLoot(character) {
         const item = getItem(entry.item)
         return el('li', { class: `slot slot-bottom q-${QUALITIES[item.quality]}`, tabindex: 0 },
           el('span', { class: 'item-name' }, item.name),
-          el('span', { class: 'loot-source' }, ` ${entry.quest ? `from "${entry.source}"` : entry.source === 'Drop' ? 'from a drop' : `from ${entry.source}`}${entry.equipped ? ', equipped' : ''}${entry.wanted ? ', wanted' : ''}`),
+          el('span', { class: 'loot-source' }, ` ${originText(entry)}, ${ago(entry.at)}, ${KEPT_TEXT[entry.kept]}${entry.wanted && entry.kept !== 'wanted' ? ', wanted' : ''}`),
           renderTooltip(item),
         )
       }))
@@ -788,7 +800,7 @@ function renderPvp(character) {
         return el('li', { class: `pvp-${kind}` },
           el('span', { class: 'pvp-headline' },
             el('span', {}, `${escaped ? PVP_ESCAPES[e.fled] : verb} ${e.foe}`, el('span', { class: 'pvp-foe' }, ` ${e.foeLevel} ${e.foeRace} ${e.foeClass}`)),
-            el('span', { class: 'pvp-when' }, `${formatDuration((Date.now() - e.at) / 3600000)} ago`),
+            el('span', { class: 'pvp-when' }, ago(e.at)),
           ),
           el('span', { class: 'pvp-detail' }, pvpDetail(e)),
         )

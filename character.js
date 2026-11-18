@@ -1,7 +1,7 @@
 import { CLASSES, MAX_LEVEL, MIN_LEVEL, NAME_PATTERN, RACES, ROLES, classIcon, xpToNextLevel } from './data.js'
 import { getZone } from './zones.js'
 import { averageItemLevel, characterPower } from './power.js'
-import { SLOTS, baseId, bestLoadout, getItem, getQuest, itemKey, levelToUse, offSpecGear, questRewardsFor, rollMobLoot, specOptions } from './gear.js'
+import { KEPT_AS, SLOTS, baseId, bestLoadout, getItem, getQuest, itemKey, levelToUse, offSpecGear, questRewardsFor, rollMobLoot, specOptions } from './gear.js'
 import { farmRates, questXp } from './combat.js'
 import { activeQuests, creditKill, nextAction, objectivesOf, pickUpQuests, tidyQuestLog, workable } from './quests.js'
 import { RIDING, isClassSpell, startingSpells, trainSpells } from './spells.js'
@@ -25,7 +25,7 @@ export default class Character {
   #rethink = null // a nextZone reason to look for a better zone at the next chance, after the wanted item changed
   #gotWanted = null // the wanted item's key once got, until it's in the loot log
 
-  constructor({ id = crypto.randomUUID(), characterName, characterClass, characterSpec, characterRace, characterRole, characterLevel = MIN_LEVEL, characterXp = 0, zone = null, copper = 0, spells, talents, equipment = {}, bag = [], questsDone = [], questLog = {}, timeBank = 0, lootLog = [], honorableKills = 0, honor = 0, honorToday = null, honorPeriod = null, rankPoints = 0, highestRank = 0, honorLastPeriod = null, pvpKills = 0, pvpDeaths = 0, pvpLog = [], pvpReadyAt = 0, hearthReadyAt = 0, dungeonQuests = [], dungeonQueue = null, dungeonClears = {}, queueDeclined = null, restingAfter = null, wanted = null, kept = [], mount = characterLevel >= RIDING[0].level ? RIDING[0].key : null }) {
+  constructor({ id = crypto.randomUUID(), characterName, characterClass, characterSpec, characterRace, characterRole, characterLevel = MIN_LEVEL, characterXp = 0, zone = null, copper = 0, spells, talents, equipment = {}, bag = [], questsDone = [], questLog = {}, timeBank = 0, lootLog = [], honorableKills = 0, honor = 0, honorToday = null, honorPeriod = null, rankPoints = 0, highestRank = 0, honorLastPeriod = null, pvpKills = 0, pvpDeaths = 0, pvpLog = [], pvpReadyAt = 0, hearthReadyAt = 0, dungeonQuests = [], dungeonQueue = null, dungeonClears = {}, queueDeclined = null, restingAfter = null, wanted = null, kept = [], origins = {}, mount = characterLevel >= RIDING[0].level ? RIDING[0].key : null }) {
     this.id = id
     this.characterName = Character.formatName(characterName)
     this.characterClass = characterClass
@@ -44,7 +44,7 @@ export default class Character {
     this.questsDone = questsDone // quest ids
     this.questLog = questLog // { questId: [count per objective] } for the zone quests held; see quests.js
     this.timeBank = timeBank // farmed seconds not yet spent on a kill or quest; below zero after world PvP
-    this.lootLog = lootLog // newest first: { item, source, at, equipped, quest? }
+    this.lootLog = lootLog // newest first: { item, source, place (zone or dungeon), at, kept (see keptAs), quest?, wanted? }
     this.honorableKills = honorableKills // players killed for honor
     this.honor = honor // honor points, unrounded
     this.honorToday = honorToday // { day (Eastern day, reset.js), kills: honorable, points: honor, victims: { characterId: kills for honor } }
@@ -64,6 +64,7 @@ export default class Character {
     this.restingAfter = restingAfter // name of the dungeon whose run it's still paying back time for (negative timeBank), or null
     this.wanted = wanted // base item id a player set the character to go after (one at a time), or null; see wanted.js
     this.kept = kept // item ids got by wanting them, newest first: never vendored, at most KEPT_SIZE
+    this.origins = origins // { item key: { source, place, at, quest? } }: where each held item was got (see #log)
     this.mount = mount // key of the best mount bought (see RIDING in spells.js), or null
   }
 
@@ -144,6 +145,7 @@ export default class Character {
     }
 
     const wornBefore = new Set(Object.values(this.equipment))
+    const heldBefore = this.heldItems()
     let levels = 0
     let copper = 0
     const acquired = []
@@ -187,13 +189,13 @@ export default class Character {
         xp = action.fight.xp
         earned = action.fight.copper
         for (const item of rollMobLoot(entry)) {
-          if (levelToUse(this, getItem(item)) < Infinity) found.push({ item, source: mob.name })
+          if (levelToUse(this, getItem(item)) < Infinity) found.push({ item, source: mob.name, place: this.zone })
         }
       } else if (action.errand) {
         const trip = runErrand(this, action.errand)
         xp = trip.xp
         earned = trip.copper
-        found.push(...trip.found)
+        found.push(...trip.found.map((f) => ({ ...f, place: action.errand.zone })))
         errands.push({ zone: action.errand.zone, quests: trip.picked, steps: trip.steps })
       } else {
         const quest = getQuest(action.questId)
@@ -201,7 +203,7 @@ export default class Character {
         delete this.questLog[action.questId]
         xp = questXp(this.characterLevel, quest)
         earned = quest.money ?? 0
-        for (const item of questRewardsFor(this, quest)) found.push({ item, source: quest.title, quest: true })
+        for (const item of questRewardsFor(this, quest)) found.push({ item, source: quest.title, place: this.zone, quest: true })
       }
       copper += earned
       const gained = this.#gainXp(xp)
@@ -220,14 +222,15 @@ export default class Character {
       if (move) travel(move)
     }
     const upgrades = [...new Set(Object.values(this.equipment))].filter((id) => !wornBefore.has(id))
-    this.#log(acquired, upgrades, now)
+    this.#log(acquired, heldBefore, now)
     return { copper, levels, upgrades, travels, errands }
   }
 
   // Pays out the end of a dungeon run (see runDungeon in dungeons.js): the kills' XP and money, then turning in
-  // `quests`. Gear won in the run is already worn or bagged; `found` is only for the loot log. Returns
+  // `quests`. Gear won in the run is already worn or bagged; `found` is only for the loot log, which leaves out
+  // what was held before the run (`heldBefore`, see heldItems). `place` is the dungeon, for the quest rewards. Returns
   // { xp, questCopper, levels, upgrades (vs `wornBefore`), travel }.
-  finishDungeon({ xp, copper, found, quests, wornBefore }, now = Date.now()) {
+  finishDungeon({ xp, copper, found, quests, wornBefore, heldBefore = wornBefore, place }, now = Date.now()) {
     const fromLevel = this.characterLevel
     const acquired = [...found]
     let questCopper = 0
@@ -237,7 +240,7 @@ export default class Character {
       this.questsDone.push(id)
       total += questXp(this.characterLevel, quest)
       questCopper += quest.money ?? 0
-      for (const item of questRewardsFor(this, quest)) acquired.push({ item, source: quest.title, quest: true })
+      for (const item of questRewardsFor(this, quest)) acquired.push({ item, source: quest.title, place, quest: true })
     }
     this.dungeonQuests = this.dungeonQuests.filter((id) => !quests.includes(id))
     const levels = this.#gainXp(total)
@@ -247,7 +250,7 @@ export default class Character {
     trainSpells(this)
     tidyQuestLog(this)
     const upgrades = [...new Set(Object.values(this.equipment))].filter((id) => !wornBefore.has(id))
-    this.#log(acquired, upgrades, now)
+    this.#log(acquired, heldBefore, now)
     this.#planned = null
     const move = levels > 0 && nextZone(this, 'level')
     const travel = move ? { from: this.zone, to: move.zone, reason: move.reason, level: this.characterLevel } : undefined
@@ -347,12 +350,37 @@ export default class Character {
     return [...worn].filter((id) => !before.has(id))
   }
 
-  #log(acquired, upgrades, now) {
+  // Every item worn, in the bag or kept for being wanted.
+  heldItems() {
+    return new Set([...Object.values(this.equipment), ...this.bag, ...this.kept])
+  }
+
+  // Why the character still has an item: 'equipped', 'wanted' (kept for being wanted), 'later' (in the bag for
+  // a higher level) or 'off-spec' (in the bag for another spec). null if it doesn't have it: it was sold.
+  keptAs(item) {
+    if (Object.values(this.equipment).includes(item)) return 'equipped'
+    if (this.kept.includes(item)) return 'wanted'
+    if (!this.bag.includes(item)) return null
+    return levelToUse(this, getItem(item)) > this.characterLevel ? 'later' : 'off-spec'
+  }
+
+  // Logs the acquired items the character kept, once each, leaving out ones it already had (`heldBefore`),
+  // and notes where they came from in `origins`. Sold items (worse gear, greed wins) aren't logged.
+  #log(acquired, heldBefore, now) {
     const got = this.#gotWanted
     this.#gotWanted = null
-    const notable = acquired.filter(({ item, quest }) => quest || item === got || getItem(item).quality >= 2 || upgrades.includes(item))
-    const entries = notable.map(({ item, source, quest }) => ({ item, source, at: now, equipped: upgrades.includes(item), ...(quest && { quest }), ...(item === got && { wanted: true }) }))
+    const seen = new Set(heldBefore)
+    const entries = []
+    for (const { item, source, place, quest } of acquired) {
+      const kept = !seen.has(item) && this.keptAs(item)
+      if (!kept) continue
+      seen.add(item)
+      entries.push({ item, source, ...(place && { place }), at: now, kept, ...(quest && { quest }), ...(item === got && { wanted: true }) })
+      this.origins[item] = { source, ...(place && { place }), at: now, ...(quest && { quest }) }
+    }
     this.lootLog = [...entries.reverse(), ...this.lootLog].slice(0, LOG_SIZE)
+    const held = new Set([...this.heldItems()].map(String))
+    for (const key of Object.keys(this.origins)) if (!held.has(key)) delete this.origins[key]
   }
 
   // Restores gear, money, spell, talent, quest and PvP fields from untrusted saved data, dropping anything
@@ -380,10 +408,13 @@ export default class Character {
       if (counts.length === objectives.length) this.questLog[id] = objectives.map((o, i) => Math.floor(fraction(counts[i], o.count)))
     }
     this.timeBank = Number.isFinite(Number(data.timeBank)) ? Math.min(Math.max(Number(data.timeBank), MIN_TIME_BANK), 3600) : 0
+    const place = (e) => (typeof e.place === 'string' && e.place ? { place: e.place.slice(0, 100) } : {})
+    // Older saves logged sold items too and only marked the equipped ones: those are all that's kept.
     this.lootLog = (Array.isArray(data.lootLog) ? data.lootLog : [])
       .filter((e) => e && itemKey(e.item) !== undefined && typeof e.source === 'string' && Number.isFinite(Number(e.at)))
       .slice(0, LOG_SIZE)
-      .map((e) => ({ item: itemKey(e.item), source: e.source.slice(0, 100), at: Number(e.at), equipped: e.equipped === true, ...(e.quest === true && { quest: true }), ...(e.wanted === true && { wanted: true }) }))
+      .map((e) => ({ item: itemKey(e.item), source: e.source.slice(0, 100), ...place(e), at: Number(e.at), kept: KEPT_AS.includes(e.kept) ? e.kept : e.equipped === true ? 'equipped' : e.wanted === true ? 'wanted' : null, ...(e.quest === true && { quest: true }), ...(e.wanted === true && { wanted: true }) }))
+      .filter((e) => e.kept)
     const count = (value) => Math.floor(fraction(value, Number.MAX_SAFE_INTEGER))
     this.honorableKills = count(data.honorableKills)
     this.honor = fraction(data.honor, Number.MAX_SAFE_INTEGER)
@@ -452,6 +483,15 @@ export default class Character {
     this.wanted = null
     this.kept = [...new Set(ids(data.kept))].slice(0, KEPT_SIZE)
     this.equipBest([...ids(equipped), ...ids(data.bag)])
+    // Saves from before origins: the loot log still knows where recent items came from.
+    const saved = data.origins && typeof data.origins === 'object' ? data.origins : {}
+    const logged = (key) => this.lootLog.find((e) => String(e.item) === key)
+    const valid = (o) => o && typeof o === 'object' && typeof o.source === 'string' && Number.isFinite(Number(o.at))
+    this.origins = {}
+    for (const key of [...this.heldItems()].map(String)) {
+      const o = [Object.hasOwn(saved, key) && saved[key], logged(key)].find(valid)
+      if (o) this.origins[key] = { source: o.source.slice(0, 100), ...place(o), at: Number(o.at), ...(o.quest === true && { quest: true }) }
+    }
     const wanted = data.wanted == null ? undefined : wantable(this, itemKey(data.wanted))
     if (wanted !== undefined && !owns(this, wanted)) this.wanted = wanted
     tidyQuestLog(this)

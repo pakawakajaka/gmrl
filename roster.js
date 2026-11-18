@@ -1,11 +1,14 @@
 import { badge, el, formatNumber } from './dom.js'
 import { FACTIONS, ROLES } from './data.js'
+import { cantCreateReason } from './character-form.js'
 import { renderSortControl, sortCharacters } from './sort.js'
 
-export function renderRoster({ account, selectedGuild, sortKey, onSelectGuild, onSort, onSaveToFile }) {
+export function renderRoster({ account, selectedGuild, sortKey, onSelectGuild, onSort, onSaveToFile, onLoadFromFile }) {
   const guild = account.getGuild(selectedGuild)
   const characters = sortCharacters(guild ? guild.characters : account.characters, sortKey)
   const createHref = guild ? `#/create/${guild.id}` : '#/create'
+  const blocked = (guild ? [guild] : account.guilds).map((g) => cantCreateReason(account, g))
+  const room = blocked.some((reason) => !reason)
 
   return el('section', { class: 'roster', 'aria-labelledby': 'view-title' },
     el('div', { class: 'view-header' },
@@ -14,9 +17,9 @@ export function renderRoster({ account, selectedGuild, sortKey, onSelectGuild, o
       ),
       el('div', { class: 'sheet-actions' },
         FACTIONS.some((f) => account.canFoundGuild(f)) && el('a', { class: 'button', href: '#/create-guild' }, '+ Create Guild'),
-        account.guilds.length
+        room
           ? el('a', { class: 'button primary', href: createHref }, '+ Create Character')
-          : el('button', { type: 'button', class: 'button primary', disabled: true, title: 'Create a guild first.' }, '+ Create Character'),
+          : el('button', { type: 'button', class: 'button primary', disabled: true, title: blocked.join(' ') }, '+ Create Character'),
       ),
     ),
     renderGuildFilter(account, guild, onSelectGuild),
@@ -26,11 +29,10 @@ export function renderRoster({ account, selectedGuild, sortKey, onSelectGuild, o
     ),
     characters.length
       ? el('ul', { class: 'character-list' }, characters.map((c) => renderCharacterCard(c, account)))
-      : account.guilds.length
-        ? el('p', { class: 'empty' }, 'No characters here yet. ', el('a', { href: createHref }, 'Create one'), '.')
-        : el('p', { class: 'empty' }, 'No guilds yet. ', el('a', { href: '#/create-guild' }, 'Create a guild'), ' to add characters.'),
-    account.devMode && el('footer', { class: 'view-footer' },
+      : el('p', { class: 'empty' }, 'No characters here yet. ', el('a', { href: createHref }, 'Create one'), '.'),
+    el('footer', { class: 'view-footer' },
       el('button', { type: 'button', class: 'button subtle', onclick: onSaveToFile }, 'Save to file'),
+      el('button', { type: 'button', class: 'button subtle', onclick: onLoadFromFile }, 'Load from file'),
     ),
   )
 }

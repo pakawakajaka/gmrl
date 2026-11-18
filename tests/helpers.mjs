@@ -3,8 +3,20 @@ import { fileURLToPath } from 'node:url'
 const root = fileURLToPath(new URL('../', import.meta.url))
 const { default: Account } = await import(root + 'account.js')
 const { default: Guild } = await import(root + 'guild.js')
+const { default: Character } = await import(root + 'character.js')
 
 const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+
+// A small account: <TYMF> (Horde) with Trollwarrior and Pakawakajaka, <South Bank Satellites> (Alliance) with Bassor.
+export function sampleAccount() {
+  const trollwarr = new Character({ characterName: 'Trollwarrior', characterClass: 'Warrior', characterSpec: 'Protection', characterRace: 'Troll', characterRole: 'Tank' })
+  const paka = new Character({ characterName: 'Pakawakajaka', characterClass: 'Shaman', characterSpec: 'Restoration', characterRace: 'Tauren', characterRole: 'Healer' })
+  const bassor = new Character({ characterName: 'Bassor', characterClass: 'Paladin', characterSpec: 'Retribution', characterRace: 'Human', characterRole: 'DPS' })
+  return new Account('bassor', [
+    new Guild({ guildName: 'TYMF', faction: 'Horde', characters: [trollwarr, paka] }),
+    new Guild({ guildName: 'South Bank Satellites', faction: 'Alliance', characters: [bassor] }),
+  ])
+}
 
 // An account holding `characters` in their given order: each run of same-faction characters becomes a guild.
 export function accountOf(name, characters = [], lastTick = Date.now()) {

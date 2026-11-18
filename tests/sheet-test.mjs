@@ -13,8 +13,8 @@ Object.assign(globalThis, { window: w, document: w.document, location: w.locatio
 globalThis.addEventListener = w.addEventListener.bind(w)
 globalThis.setInterval = () => {}
 
-const { createDefaultAccount } = await import(ROOT + 'storage.js')
-const save = JSON.parse(JSON.stringify(createDefaultAccount()))
+const { sampleAccount } = await import('./helpers.mjs')
+const save = JSON.parse(JSON.stringify(sampleAccount()))
 const c = save.guilds[0].characters[0]
 c.zone = 'Durotar'
 c.characterRace = c.characterRace // keep
