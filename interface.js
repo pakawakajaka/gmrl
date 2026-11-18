@@ -1,4 +1,4 @@
-import { renderCharacterForm } from './character-form.js'
+import { cantCreateReason, renderCharacterForm } from './character-form.js'
 import { renderChanges } from './changes-view.js'
 import { renderCharacterSheet } from './character-sheet.js'
 import { MAX_LEVEL } from './data.js'
@@ -51,6 +51,12 @@ let remindedAt = -Infinity // last backup reminder
 function currentView() {
   const [view, id, sub] = location.hash.replace(/^#\/?/, '').split('/')
   return { view, id, sub }
+}
+
+// A form being filled in or an open modal. Background updates don't re-render over them, which would wipe the
+// input or close the modal; the next render catches up.
+function busy() {
+  return app.querySelector('form, dialog[open]')
 }
 
 function render() {
@@ -270,15 +276,15 @@ function gameTick() {
   reportRuns(runs)
   reportRanks(ranks)
   if (levelUps.length || upgrades.length || fights.length || travels.length || errands.length || runs.length || ranks.length || wanted.length) {
-    if (!app.querySelector('dialog[open]')) render() // don't close an open modal; the next render catches up
+    if (!busy()) render()
     save()
   } else if (currentView().view === 'farm') {
     updateFarm(app, account)
   }
-  // At the midnight reset more characters can be created; refresh screens that say so, but not a form being filled in.
+  // At the midnight reset more characters can be created; refresh screens that say so.
   if (Date.now() >= createReset) {
     createReset = Account.nextCreateReset()
-    if (!app.querySelector('form, dialog[open]')) render()
+    if (!busy()) render()
   }
   updateGold()
   if (Date.now() - lastSave >= SAVE_EVERY_MS) save()
@@ -313,15 +319,19 @@ function remindBackup() {
     el('button', { type: 'button', class: 'button small', onclick: (event) => { event.target.closest('.notice').remove(); handleSaveToFile() } }, 'Save to file'))
 }
 
+// The form checked the account it was drawn with. Another tab may have changed it since (see the storage
+// listener), so check again.
 function handleSave(character, guildId) {
-  if (!account.addCharacter(character, guildId)) return
+  const guild = account.getGuild(guildId)
+  if (account.isNameTaken(character.characterName)) return notify(`You already have a character named ${character.characterName}.`)
+  if (!account.addCharacter(character, guildId)) return notify((guild && cantCreateReason(account, guild)) || `${character.characterName} could not be created.`)
   save()
   location.hash = '#/roster'
 }
 
 function handleCreateGuild({ guildName, faction }) {
   const guild = new Guild({ guildName, faction })
-  if (!account.addGuild(guild)) return
+  if (!account.addGuild(guild)) return notify(account.canFoundGuild(faction) ? `You already have a guild named ${Guild.formatName(guildName)}.` : `You already have a ${faction} guild.`)
   selectedGuild = guild.id
   save()
   requestPersistentStorage()
@@ -387,7 +397,7 @@ async function handleSaveToFile() {
     markBackup()
     requestPersistentStorage()
     notify(file.picked ? `Saved ${file.name}.` : `Saved ${file.name} to your downloads.`)
-    if (!app.querySelector('form, dialog[open]')) render() // the roster says when you last saved one
+    if (!busy()) render() // the roster says when you last saved one
   }
 }
 
@@ -491,7 +501,7 @@ window.addEventListener('storage', (event) => {
   const next = loadAccount()
   if (next.newer) return showNewerSave()
   account = next.account
-  if (!app.querySelector('dialog[open]')) render()
+  if (!busy()) render()
 })
 
 document.getElementById('version').textContent = `v${VERSION}`
