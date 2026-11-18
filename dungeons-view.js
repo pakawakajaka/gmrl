@@ -1,6 +1,6 @@
 // The Dungeons page: every dungeon with who's queued for it, recent runs, and each run in detail.
 import { CLASSES, classIcon } from './data.js'
-import { el, formatDuration, formatNumber, money } from './dom.js'
+import { characterName, el, formatDuration, formatNumber, money } from './dom.js'
 import { DUNGEON_QUESTS, QUALITIES, getItem } from './gear.js'
 import { DUNGEONS, GROUP_SIZE, RUN_METER_SIZE, dungeonQuestIds, getDungeon, isQueuedFor } from './dungeons.js'
 import { KEPT_TEXT, renderTooltip } from './character-sheet.js'
@@ -43,7 +43,7 @@ function renderList(account) {
 
 function renderDungeonRow(dungeon, account) {
   const factions = dungeon.faction ? [dungeon.faction] : FACTIONS
-  const name = (c) => el('a', { href: `#/character/${c.id}` }, c.characterName)
+  const name = (c) => characterName(c, true)
   return el('li', { class: 'dungeon-row' },
     el('span', { class: 'encounter-shape' }, `${dungeon.level[0]}–${dungeon.level[1]}`),
     el('span', { class: 'encounter-main' },
@@ -122,7 +122,7 @@ function renderRun(run, account) {
             const item = getItem(l.item)
             return el('li', { class: `slot slot-bottom q-${QUALITIES[item.quality]}`, tabindex: 0 },
               el('span', { class: 'item-name' }, item.name),
-              el('span', { class: 'loot-source' }, ` from ${l.from} · ${run.members[l.to].name}, ${KEPT_TEXT[l.kept]}`),
+              el('span', { class: 'loot-source' }, ` from ${l.from} · `, characterName(run.members[l.to]), `, ${KEPT_TEXT[l.kept]}`),
               renderTooltip(item),
             )
           }))
@@ -173,7 +173,7 @@ function renderMeters(run) {
 }
 
 function renderMember(run, m, index, account, badges) {
-  const name = account.getCharacter(m.id) ? el('a', { href: `#/character/${m.id}` }, m.name) : m.name
+  const name = account.getCharacter(m.id) ? characterName(m, true) : m.name
   const won = run.loot.filter((l) => l.to === index)
   const gains = [m.xp > 0 && `${formatNumber(m.xp)} XP`, won.length && plural(won.length, 'item')].filter(Boolean)
   return el('li', { class: 'encounter-member', style: { '--class-color': CLASSES[m.class].color } },

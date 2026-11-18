@@ -2,7 +2,7 @@
 // account, and each one in detail.
 import { CLASSES, RACES, classIcon } from './data.js'
 import { ENCOUNTER_DETAIL_SIZE, ENCOUNTER_LOG_SIZE } from './account.js'
-import { el, formatChance, formatDuration, formatNumber } from './dom.js'
+import { characterName, el, formatChance, formatDuration, formatNumber } from './dom.js'
 import { MIN_HONOR_KILLS, earnedIn, standings } from './honor.js'
 import { periodOf, periodStart } from './reset.js'
 
@@ -34,8 +34,8 @@ export function renderWorldPvp({ account, encounterId }) {
 }
 
 // What happened, in a line: "Zarku ganked Bassor" means Bassor died; anything else says so.
-// `who` renders a member (a name by default).
-export function headline(e, who = (m) => m.name) {
+// `who` renders a member (its name in its class color by default).
+export function headline(e, who = (m) => characterName(m)) {
   const [a, b] = e.members
   if (e.kind === 'evade') return [who(a), e.how === 'hid' ? ' hid from ' : ' outran ', who(b)]
   const after = a.out === 'died' ? (b.out === 'died' ? ' and both died' : ' and died')
@@ -51,10 +51,10 @@ function outcome(e) {
   if (e.kind === 'evade') return 'Escaped'
   const escaped = e.members.filter((m) => m.out === 'escaped')
   if (e.winner === null) {
-    if (escaped.length && e.kind === 'duel') return `${escaped[0].name} bubble-hearthed out`
+    if (escaped.length && e.kind === 'duel') return [characterName(escaped[0]), ' bubble-hearthed out']
     return e.kind === 'duel' ? 'Nobody died' : 'No winner'
   }
-  return e.kind === 'duel' ? `${e.members[e.winner].name} won` : `${factionOf(sideOf(e, e.winner)[0])} won`
+  return e.kind === 'duel' ? [characterName(e.members[e.winner]), ' won'] : `${factionOf(sideOf(e, e.winner)[0])} won`
 }
 
 const resultClass = (e) => `encounter-${e.winner === null ? 'none' : factionOf(sideOf(e, e.winner)[0]).toLowerCase()}`
@@ -142,7 +142,7 @@ function renderRow(e) {
       el('span', { class: 'encounter-shape' }, shape(e)),
       el('span', { class: 'encounter-main' },
         el('strong', {}, headline(e)),
-        el('span', { class: 'encounter-meta' }, [e.zone, outcome(e), ...extras].join(' · ')),
+        el('span', { class: 'encounter-meta' }, [e.zone, outcome(e), ...extras].map((part, i) => [i > 0 && ' · ', part])),
       ),
       el('span', { class: 'encounter-when' }, ago(e.at)),
     ),
@@ -184,11 +184,12 @@ function renderEncounter(e, account) {
 
 function summary(e) {
   const [a, b] = e.members
+  const name = characterName
   if (e.kind === 'evade') {
-    return `${a.name} spotted ${b.name}, ${plural(b.level - a.level, 'level')} higher, and ${e.how === 'hid' ? 'hid' : 'ran'} instead of fighting. Escaping cost a minute of farming.`
+    return [name(a), ' spotted ', name(b), `, ${plural(b.level - a.level, 'level')} higher, and ${e.how === 'hid' ? 'hid' : 'ran'} instead of fighting. Escaping cost a minute of farming.`]
   }
-  const caught = e.caught === 'hid' ? ` ${b.name} tried to hide and got found.` : e.caught === 'ran' ? ` ${b.name} tried to run and got caught.` : ''
-  return `${outcome(e)}.${caught} ${a.name} sized it up at ${formatChance(e.guess)} to win; one on one it was really ${formatChance(e.odds)}.`
+  const caught = e.caught === 'hid' ? [' ', name(b), ' tried to hide and got found.'] : e.caught === 'ran' ? [' ', name(b), ' tried to run and got caught.'] : []
+  return [outcome(e), '.', caught, ' ', name(a), ` sized it up at ${formatChance(e.guess)} to win; one on one it was really ${formatChance(e.odds)}.`]
 }
 
 function renderSide(e, side, account) {
@@ -203,7 +204,7 @@ function renderSide(e, side, account) {
 }
 
 function renderMember(e, m, account) {
-  const name = account.getCharacter(m.id) ? el('a', { href: `#/character/${m.id}` }, m.name) : m.name
+  const name = account.getCharacter(m.id) ? characterName(m, true) : m.name
   const status = e.kind === 'evade' ? []
     : [
       m.joined > 0 && `Added at ${clock(m.joined)}`,
@@ -220,7 +221,7 @@ function renderMember(e, m, account) {
   )
 }
 
-function timeline(e, who = (m) => m.name) {
+function timeline(e, who = (m) => characterName(m)) {
   const [a, b] = e.members
   const opener = e.caught === 'hid' ? [who(a), ' finds ', who(b), ' hiding and opens on them']
     : e.caught === 'ran' ? [who(a), ' chases down ', who(b), ' and opens on them']
@@ -232,7 +233,7 @@ function timeline(e, who = (m) => m.name) {
     if (m.out === 'escaped') events.push({ t: m.left, text: [who(m), ' bubble-hearths out'] })
   }
   events.sort((x, y) => x.t - y.t)
-  events.push({ t: Math.max(e.seconds, ...e.members.map((m) => m.left)), text: `${outcome(e)}.` })
+  events.push({ t: Math.max(e.seconds, ...e.members.map((m) => m.left)), text: [outcome(e), '.'] })
   return events
 }
 

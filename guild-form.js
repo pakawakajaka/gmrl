@@ -1,6 +1,6 @@
 import Guild, { GUILD_NAME_MAX, GUILD_SIZE } from './guild.js'
 import { DAILY_CHARACTERS } from './account.js'
-import { badge, el } from './dom.js'
+import { badge, el, guildName } from './dom.js'
 import { FACTIONS, RACES } from './data.js'
 import { field, pickerField, tile } from './character-form.js'
 
@@ -30,7 +30,7 @@ export function renderGuildForm({ account, onSave, onLoadFromFile }) {
     const existing = account.guilds.find((g) => g.faction === faction)
     const races = Object.keys(RACES).filter((race) => RACES[race].faction === faction).join(', ')
     const label = tile('faction', faction, { '--tile-color': `var(--${faction.toLowerCase()})` },
-      el('span', { class: 'tile-text' }, faction, el('small', {}, existing ? `You have <${existing.guildName}>` : races)))
+      el('span', { class: 'tile-text' }, faction, el('small', {}, existing ? ['You have ', guildName(existing)] : races)))
     const input = label.querySelector('input')
     input.disabled = Boolean(existing)
     input.checked = open.length === 1 && open[0] === faction

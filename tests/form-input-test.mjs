@@ -49,6 +49,26 @@ click('characterRace', 'Orc')
 clock += 2 * HOUR
 intervals[0]()
 check('a game event happened', notices().includes('Trollwarrior'), notices())
+{
+  const { QUALITIES, getItem } = await import(ROOT + 'gear.js')
+  const worn = JSON.parse(w.localStorage.getItem('gmrl.account')).guilds.flatMap((g) => g.characters).flatMap((c) => Object.values(c.equipment)).map(getItem)
+  const links = [...w.document.querySelectorAll('.notice a.item-quality')]
+  check('equipped gear is in its quality color', links.length > 0 && links.every((a) => {
+    const item = worn.find((i) => `[${i.name}]` === a.textContent)
+    return item && a.classList.contains(`q-${QUALITIES[item.quality]}`) && a.getAttribute('href') === `#/character/${acc.characters[0].id}`
+  }), links.map((a) => `${a.className} ${a.textContent}`).join(' | '))
+  const { CLASSES } = await import(ROOT + 'data.js')
+  const names = [...w.document.querySelectorAll('.notice .char-name')]
+  check('character names in notices are in class color', names.length > 0 && names.every((n) => {
+    const c = acc.characters.find((c) => c.characterName === n.textContent)
+    return c && n.style.getPropertyValue('--class-color') === CLASSES[c.characterClass].color
+  }), names.map((n) => `${n.textContent} ${n.style.getPropertyValue('--class-color')}`).join(' | '))
+}
+{
+  const tiles = [...w.document.querySelectorAll('.tile-text .guild-name')]
+  check('guild picker names are in faction color', tiles.length === acc.guilds.length && tiles.every((t) =>
+    acc.guilds.some((g) => g.guildName === t.textContent && t.classList.contains(`faction-${g.faction.toLowerCase()}`))))
+}
 check('create character form kept', q('form') === form && q('#characterName').value === 'Keepme' && q('input[name=characterRace][value=Orc]').checked)
 
 // Another tab makes a character of the same name meanwhile.
@@ -66,6 +86,13 @@ check('taken name is refused, input kept', w.location.hash === '#/create' && not
 type('characterName', 'Keepyou')
 submit()
 check('a free name is saved', w.location.hash === '#/roster' && JSON.parse(w.localStorage.getItem('gmrl.account')).guilds[0].characters.some((c) => c.characterName === 'Keepyou'))
+await new Promise((resolve) => setTimeout(resolve, 10)) // the roster renders on hashchange
+{
+  const guilds = JSON.parse(w.localStorage.getItem('gmrl.account')).guilds
+  const tags = [...w.document.querySelectorAll('.guild-tags .guild-name, .guild-chip .guild-name')]
+  check('roster guild names are in faction color', tags.length > guilds.length && tags.every((t) =>
+    guilds.some((g) => [g.guildName, `<${g.guildName}>`].includes(t.textContent) && t.classList.contains(`faction-${g.faction.toLowerCase()}`))))
+}
 
 // Create Guild, while another tab founds a Horde guild.
 w = await openPage('#/create-guild', null)

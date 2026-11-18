@@ -1,6 +1,6 @@
 // The talent selector: the class's three trees, with the spec's default build highlighted. Click a talent
 // to add a point, right-click (or Shift+click, the - key, or touch and hold) to take one back.
-import { el } from './dom.js'
+import { characterName, el } from './dom.js'
 import { TALENTS } from './gear-data.js'
 import { specOptions } from './gear.js'
 import { POINTS_PER_ROW, canLearn, canUnlearn, defaultBuild, pointsSpent, talentPoints, talentSupport } from './talents.js'
@@ -83,7 +83,7 @@ export function renderTalents({ character, onLearn, onUnlearn, onReset, onDefaul
   return el('section', { class: 'talents-view', style: { '--class-color': character.classColor }, 'aria-labelledby': 'view-title' },
     el('div', { class: 'view-header' },
       el('div', {},
-        el('h2', { id: 'view-title' }, `${character.characterName}'s Talents`),
+        el('h2', { id: 'view-title' }, characterName(character), '\'s Talents'),
         el('p', { class: 'sheet-subtitle' }, `Level ${character.characterLevel} ${character.characterSpec} ${character.characterClass} · ${counts.join(' / ')} · `,
           el('strong', { class: 'talent-points-left' }, `${unspent} point${unspent === 1 ? '' : 's'} left`)),
       ),

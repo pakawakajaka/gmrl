@@ -1,3 +1,5 @@
+import { CLASSES } from './data.js'
+
 // Builds a DOM element. Children are appended as nodes/text, never parsed as HTML.
 export function el(tag, attributes = {}, ...children) {
   const node = document.createElement(tag)
@@ -14,6 +16,21 @@ export function el(tag, attributes = {}, ...children) {
 
 export function badge(text) {
   return el('span', { class: `badge badge-${text.toLowerCase()}` }, text)
+}
+
+// A character's name in its class color, linking to its page if `link`. Takes a Character or a logged
+// member ({ id, name, class }).
+export function characterName(c, link = false) {
+  return el(link ? 'a' : 'span', {
+    class: 'char-name',
+    href: link ? `#/character/${c.id}` : null,
+    style: { '--class-color': CLASSES[c.characterClass ?? c.class].color },
+  }, c.characterName ?? c.name)
+}
+
+// A guild's name in its faction's color, as <Name> unless `text` says otherwise.
+export function guildName(g, text = `<${g.guildName}>`) {
+  return el('span', { class: `guild-name faction-${g.faction.toLowerCase()}` }, text)
 }
 
 const numberFormat = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 })

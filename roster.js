@@ -1,4 +1,4 @@
-import { badge, el, formatDaysAgo, formatNumber } from './dom.js'
+import { badge, el, formatDaysAgo, formatNumber, guildName } from './dom.js'
 import { FACTIONS, ROLES } from './data.js'
 import { cantCreateReason } from './character-form.js'
 import { renderSortControl, sortCharacters } from './sort.js'
@@ -43,7 +43,7 @@ export function renderRoster({ account, selectedGuild, sortKey, backup, onSelect
 export function renderGuildFilter(account, activeGuild, onSelectGuild) {
   const options = [
     { label: 'All Characters', id: null, count: account.characters.length },
-    ...account.guilds.map((g) => ({ label: g.guildName, id: g.id, faction: g.faction, count: g.characters.length })),
+    ...account.guilds.map((g) => ({ label: guildName(g, g.guildName), id: g.id, faction: g.faction, count: g.characters.length })),
   ]
   return el('nav', { class: 'guild-filter', 'aria-label': 'Filter by guild' },
     options.map((option) => el('button', {
@@ -76,7 +76,7 @@ function renderCharacterCard(character, account) {
         el('p', {}, `Level ${character.characterLevel} ${character.characterRace} ${character.characterSpec} ${character.characterClass}`),
         el('p', { class: 'badges' }, badge(character.characterRole), badge(character.faction)),
         el('p', { class: 'farm-status' }, `Power level ${formatNumber(Math.round(character.power.solo))} · Item level ${formatNumber(character.itemLevel)}`),
-        el('p', { class: 'guild-tags' }, guild ? `<${guild.guildName}>` : 'No guild'),
+        el('p', { class: 'guild-tags' }, guild ? guildName(guild) : 'No guild'),
         el('p', { class: 'farm-status' }, character.farmStatus),
       ),
     ),

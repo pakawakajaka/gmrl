@@ -1,7 +1,7 @@
 import Account, { DAILY_CHARACTERS } from './account.js'
 import Character from './character.js'
 import { GUILD_SIZE } from './guild.js'
-import { badge, el, formatDuration } from './dom.js'
+import { badge, el, formatDuration, guildName } from './dom.js'
 import { CLASSES, FACTIONS, MIN_LEVEL, RACES, ROLES, classIcon } from './data.js'
 
 const FIELD_ORDER = ['characterName', 'guildId', 'characterRace', 'characterClass', 'characterSpec', 'characterRole']
@@ -54,7 +54,7 @@ export function renderCharacterForm({ account, guildId, onSave }) {
           const left = account.createsLeft(g.faction)
           const room = g.isFull ? 'full' : left ? `${left} more today` : 'none left today'
           const label = tile('guildId', g.id, null,
-            el('span', { class: 'tile-text' }, g.guildName,
+            el('span', { class: 'tile-text' }, guildName(g, g.guildName),
               el('small', {}, `${g.characters.length}/${GUILD_SIZE} members, ${room}`)))
           label.title = cantCreateReason(account, g) ?? ''
           label.querySelector('input').disabled = !joinable(g)
@@ -164,7 +164,7 @@ export function renderCharacterForm({ account, guildId, onSave }) {
     previewDetails.textContent = ['Level', level, race, spec, cls].filter(Boolean).join(' ')
     previewBadges.replaceChildren(...[role, race && RACES[race].faction].filter(Boolean).map(badge))
     const guild = account.getGuild(picks.guildId)
-    previewGuild.textContent = guild ? `<${guild.guildName}>` : 'No guild chosen'
+    previewGuild.replaceChildren(guild ? guildName(guild) : 'No guild chosen')
   }
 
   function showError(key, message) {

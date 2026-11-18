@@ -1222,6 +1222,11 @@ main:has(.character-sheet) {
 .q-rare { --quality: #0070dd; }
 .q-epic { --quality: #a335ee; }
 
+/* An item's [Name] in running text, e.g. a notice. */
+.item-quality {
+  color: var(--quality);
+}
+
 .slot {
   position: relative;
   display: flex;
@@ -2395,6 +2400,15 @@ main:has(.character-sheet) {
   font-weight: 600;
 }
 
+/* Names everywhere: characters in their class color, guilds in their faction's (see dom.js). */
+.char-name {
+  color: var(--class-color);
+}
+
+.guild-name {
+  color: var(--tile-color);
+}
+
 .spell {
   --school-color: var(--text);
   color: var(--school-color);
@@ -2871,6 +2885,7 @@ main:has(.character-sheet) {
   }
 
   #app a:not([class]),
+  #app a.char-name,
   .notice a {
     padding-block: 0.35rem;
   }

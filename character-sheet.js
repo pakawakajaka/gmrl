@@ -1,4 +1,4 @@
-import { badge, el, formatChance, formatDuration, formatNumber, money } from './dom.js'
+import { badge, characterName, el, formatChance, formatDuration, formatNumber, money } from './dom.js'
 import { CLASS_BITS, DUNGEON_QUESTS, INVENTORY_TYPES, QUALITIES, QUEST_ITEMS, RACE_BITS, SLOTS, baseId, getItem, getQuest, itemTypeName, levelToUse, offSpecGear, questRewardsFor } from './gear.js'
 import { SCHOOLS, STAT_NAMES, characterStats } from './stats.js'
 import { drinkFor, foodFor, getMob, respawnWait } from './combat.js'
@@ -36,7 +36,7 @@ export function renderCharacterSheet({ character, onDelete, onQueue, onLeaveQueu
   return el('section', { class: 'character-sheet', style: { '--class-color': character.classColor }, 'aria-labelledby': 'view-title' },
     el('div', { class: 'view-header' },
       el('div', {},
-        el('h2', { id: 'view-title' }, character.characterName),
+        el('h2', { id: 'view-title' }, characterName(character)),
         el('p', { class: 'sheet-subtitle' }, `Level ${character.characterLevel} ${character.characterRace} ${character.characterSpec} ${character.characterClass}`),
         el('p', { class: 'sheet-subtitle sheet-status' }, character.farmStatus),
       ),
@@ -72,7 +72,7 @@ export function renderCharacterSheet({ character, onDelete, onQueue, onLeaveQueu
 
 function renderDeleteDialog(character, onDelete) {
   const dialog = el('dialog', { class: 'modal', 'aria-labelledby': 'delete-title', 'aria-describedby': 'delete-text' },
-    el('h3', { id: 'delete-title' }, `Delete ${character.characterName}?`),
+    el('h3', { id: 'delete-title' }, 'Delete ', characterName(character), '?'),
     el('p', { id: 'delete-text' }, 'This permanently removes the character, their gear and progress. This can\'t be undone.'),
     el('div', { class: 'modal-actions' },
       el('button', { type: 'button', class: 'button', autofocus: true, onclick: () => dialog.close() }, 'Cancel'),
@@ -799,7 +799,7 @@ function renderPvp(character) {
         const escaped = e.won === null && (e.fled === 'hearth' || (e.fled && !e.caught))
         return el('li', { class: `pvp-${kind}` },
           el('span', { class: 'pvp-headline' },
-            el('span', {}, `${escaped ? PVP_ESCAPES[e.fled] : verb} ${e.foe}`, el('span', { class: 'pvp-foe' }, ` ${e.foeLevel} ${e.foeRace} ${e.foeClass}`)),
+            el('span', {}, `${escaped ? PVP_ESCAPES[e.fled] : verb} `, characterName({ name: e.foe, class: e.foeClass }), el('span', { class: 'pvp-foe' }, ` ${e.foeLevel} ${e.foeRace} ${e.foeClass}`)),
             el('span', { class: 'pvp-when' }, ago(e.at)),
           ),
           el('span', { class: 'pvp-detail' }, pvpDetail(e)),

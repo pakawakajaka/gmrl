@@ -2,9 +2,9 @@ import { cantCreateReason, renderCharacterForm } from './character-form.js'
 import { renderChanges } from './changes-view.js'
 import { renderCharacterSheet } from './character-sheet.js'
 import { MAX_LEVEL } from './data.js'
-import { el, formatChance, formatDaysAgo, formatDuration, formatNumber } from './dom.js'
+import { characterName, el, formatChance, formatDaysAgo, formatDuration, formatNumber, guildName } from './dom.js'
 import { renderFarm, updateFarm } from './farm.js'
-import { getItem } from './gear.js'
+import { QUALITIES, getItem } from './gear.js'
 import Guild from './guild.js'
 import { renderGuildForm } from './guild-form.js'
 import { renderRoster } from './roster.js'
@@ -177,18 +177,24 @@ function notify(...content) {
   while (noticesEl.children.length > MAX_NOTICES) noticesEl.lastElementChild.remove()
 }
 
+// An item's [Name] in its quality color, linking to `href` if given.
+function itemName(id, href) {
+  const item = getItem(id)
+  return el(href ? 'a' : 'span', { class: `item-quality q-${QUALITIES[item.quality]}`, href }, `[${item.name}]`)
+}
+
 function reportLevelUps(levelUps) {
   for (const c of levelUps) {
-    notify(`${c.characterName} reached level ${c.characterLevel}!`)
+    notify(characterName(c, true), ` reached level ${c.characterLevel}!`)
     if (c.zone && c.xpPerHour === 0 && c.characterLevel < MAX_LEVEL) {
-      notify(`${c.characterName} has outleveled ${c.zone} and no longer gains XP there.`)
+      notify(characterName(c, true), ` has outleveled ${c.zone} and no longer gains XP there.`)
     }
   }
 }
 
 function reportUpgrades(upgrades) {
   for (const { character, item } of upgrades.slice(0, MAX_UPGRADE_NOTICES)) {
-    notify(`${character.characterName} equipped `, el('a', { href: `#/character/${character.id}` }, `[${getItem(item).name}]`), '.')
+    notify(characterName(character, true), ' equipped ', itemName(item, `#/character/${character.id}`), '.')
   }
   const more = upgrades.length - MAX_UPGRADE_NOTICES
   if (more > 0) notify(`…and ${more} more gear upgrade${more === 1 ? '' : 's'}. Open a character page to see them.`)
@@ -199,7 +205,7 @@ function reportFights(fights) {
   const points = (f) => `${formatNumber(Math.floor(f.points))} honor`
   for (const f of fights.slice(0, MAX_FIGHT_NOTICES)) {
     const e = encounterRecord(f, f.id)
-    const who = (m) => [account.getCharacter(m.id) ? el('a', { href: `#/character/${m.id}` }, m.name) : m.name, ` (${m.level} ${m.class})`]
+    const who = (m) => [characterName(m, Boolean(account.getCharacter(m.id))), ` (${m.level} ${m.class})`]
     const view = [' ', el('a', { href: `#/pvp/${f.id}` }, 'View')]
     if (f.kind === 'evade') {
       notify(...headline(e, who), ` in ${f.zone}.`, ...view)
@@ -233,7 +239,7 @@ function reportTravels(travels) {
   const latest = new Map()
   for (const t of travels) latest.set(t.character, { ...t, count: (latest.get(t.character)?.count ?? 0) + 1 })
   for (const t of latest.values()) {
-    const name = el('a', { href: `#/character/${t.character.id}` }, t.character.characterName)
+    const name = characterName(t.character, true)
     const why = t.count > 1 ? ` moved through ${t.count} zones` : MOVE_REASONS[t.reason]?.(t) ?? ' moved on'
     notify(name, `${why} and went to ${t.to}.`)
   }
@@ -242,7 +248,7 @@ function reportTravels(travels) {
 // One notice per dungeon run.
 function reportRuns(runs) {
   for (const run of runs.slice(0, MAX_RUN_NOTICES)) {
-    const who = run.members.flatMap((m, i) => [i ? ', ' : '', account.getCharacter(m.id) ? el('a', { href: `#/character/${m.id}` }, m.name) : m.name])
+    const who = run.members.flatMap((m, i) => [i ? ', ' : '', characterName(m, Boolean(account.getCharacter(m.id)))])
     const quests = run.members.reduce((n, m) => n + m.quests.length, 0)
     notify(...who, `: ${runHeadline(run).replace(/^./, (c) => c.toLowerCase())}${quests ? ` and turned in ${quests} quest${quests === 1 ? '' : 's'}` : ''}. `, el('a', { href: `#/dungeons/${run.id}` }, 'View'))
   }
@@ -253,7 +259,7 @@ function reportRuns(runs) {
 // One notice per character whose PvP rank changed at the honor reset.
 function reportRanks(ranks) {
   for (const { character, from, to } of ranks) {
-    const name = el('a', { href: `#/character/${character.id}` }, character.characterName)
+    const name = characterName(character, true)
     notify(name, to > 0 ? ` ${to > from ? 'rose' : 'fell'} to ${character.rankTitle} (Rank ${to}).` : ' lost its PvP rank.')
   }
 }
@@ -261,7 +267,7 @@ function reportRanks(ranks) {
 // One notice per character that got the item it wanted.
 function reportWanted(wanted) {
   for (const { character, item } of wanted) {
-    notify(el('a', { href: `#/character/${character.id}` }, character.characterName), ` got the item it wanted: [${getItem(item).name}].`)
+    notify(characterName(character, true), ' got the item it wanted: ', itemName(item), '.')
   }
 }
 
@@ -324,18 +330,19 @@ function remindBackup() {
 function handleSave(character, guildId) {
   const guild = account.getGuild(guildId)
   if (account.isNameTaken(character.characterName)) return notify(`You already have a character named ${character.characterName}.`)
-  if (!account.addCharacter(character, guildId)) return notify((guild && cantCreateReason(account, guild)) || `${character.characterName} could not be created.`)
+  if (!account.addCharacter(character, guildId)) return notify((guild && cantCreateReason(account, guild)) || [characterName(character), ' could not be created.'])
   save()
   location.hash = '#/roster'
 }
 
-function handleCreateGuild({ guildName, faction }) {
-  const guild = new Guild({ guildName, faction })
-  if (!account.addGuild(guild)) return notify(account.canFoundGuild(faction) ? `You already have a guild named ${Guild.formatName(guildName)}.` : `You already have a ${faction} guild.`)
+function handleCreateGuild(values) {
+  const { faction } = values
+  const guild = new Guild(values)
+  if (!account.addGuild(guild)) return notify(account.canFoundGuild(faction) ? `You already have a guild named ${Guild.formatName(values.guildName)}.` : `You already have a ${faction} guild.`)
   selectedGuild = guild.id
   save()
   requestPersistentStorage()
-  notify(`${guild.guildName} (${faction}) was founded.`)
+  notify(guildName(guild, guild.guildName), ` (${faction}) was founded.`)
   location.hash = '#/roster'
 }
 
@@ -382,7 +389,7 @@ function handleWant(characterId, id) {
 function handleDelete(character) {
   account.deleteCharacter(character.id)
   save()
-  notify(`${character.characterName} was deleted.`)
+  notify(characterName(character), ' was deleted.')
   location.hash = '#/roster'
 }
 
@@ -427,14 +434,14 @@ async function handleLoadFromFile() {
 function describeAccount(a) {
   if (a.guilds.length === 0) return 'no guilds'
   const n = a.characters.length
-  return `${n} character${n === 1 ? '' : 's'} in ${a.guilds.map((g) => `<${g.guildName}>`).join(' and ')}`
+  return [`${n} character${n === 1 ? '' : 's'} in `, a.guilds.map((g, i) => [i > 0 && ' and ', guildName(g)])]
 }
 
 function confirmLoad(name, backup) {
   const played = new Date(backup.account.lastTick).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
   const dialog = el('dialog', { class: 'modal', 'aria-labelledby': 'load-title', 'aria-describedby': 'load-text', onclose: () => dialog.remove() },
     el('h3', { id: 'load-title' }, `Load ${name}?`),
-    el('p', { id: 'load-text' }, `It has ${describeAccount(backup.account)}, last played ${played}. It replaces your ${describeAccount(account)}. This can't be undone, so save to file first if you want to keep them.`),
+    el('p', { id: 'load-text' }, 'It has ', describeAccount(backup.account), `, last played ${played}. It replaces your `, describeAccount(account), '. This can\'t be undone, so save to file first if you want to keep them.'),
     el('div', { class: 'modal-actions' },
       el('button', { type: 'button', class: 'button', autofocus: true, onclick: () => dialog.close() }, 'Cancel'),
       el('button', { type: 'button', class: 'button danger', onclick: () => { dialog.close(); useBackup(name, backup) } }, 'Load save'),
