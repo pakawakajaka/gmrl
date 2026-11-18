@@ -944,6 +944,7 @@ input[type="search"] {
 
 .continent {
   min-width: 0;
+  container-type: inline-size;
 }
 
 .continent h3 {
@@ -958,6 +959,14 @@ input[type="search"] {
   overflow-x: auto;
   border: 1px solid var(--border);
   border-radius: var(--radius);
+  /* A glow at an edge with more table past it, so a sideways scroll is easy to spot. The covers scroll with
+     the table and hide the glow once that edge is reached. */
+  background:
+    linear-gradient(to right, var(--bg) 30%, rgb(18 16 14 / 0)) left / 3rem 100% no-repeat local,
+    linear-gradient(to left, var(--bg) 30%, rgb(18 16 14 / 0)) right / 3rem 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%, rgb(240 178 50 / 0.45), rgb(240 178 50 / 0)) left / 1rem 100% no-repeat,
+    radial-gradient(farthest-side at 100% 50%, rgb(240 178 50 / 0.45), rgb(240 178 50 / 0)) right / 1rem 100% no-repeat,
+    var(--bg);
 }
 
 .zone-table {
@@ -1031,6 +1040,94 @@ input[type="search"] {
 .lock-reason {
   font-size: 0.8rem;
   color: var(--text-muted);
+}
+
+/* When a continent's column is too narrow for the whole table (phones, tablets, and both continents side by
+   side), each zone is a small card instead of a table row: name and action; then faction, levels and rates,
+   wrapping as needed; then who's farming. That way the Send buttons are never hidden off to the side. */
+@container (max-width: 50rem) {
+  .zone-table,
+  .zone-table tbody {
+    display: block;
+  }
+
+  .zone-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+
+  .zone-table tbody tr {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem 0.75rem;
+    padding: 0.6rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* Ends the first line after the name and action. */
+  .zone-table tbody tr::after {
+    content: "";
+    flex-basis: 100%;
+    order: 1;
+    margin-top: -0.25rem;
+  }
+
+  .zone-table tbody tr:last-child {
+    border-bottom: 0;
+  }
+
+  .zone-table tbody th,
+  .zone-table tbody td,
+  .zone-table .num {
+    padding: 0;
+    border: 0;
+    text-align: left;
+  }
+
+  .zone-table .zone-name {
+    flex: 1 1 0;
+    min-width: 0;
+    white-space: normal;
+  }
+
+  .zone-table .zone-action {
+    max-width: 8rem;
+    text-align: right;
+    white-space: normal;
+  }
+
+  .zone-table .zone-faction,
+  .zone-table .zone-levels,
+  .zone-table .zone-xp,
+  .zone-table .zone-gold {
+    order: 2;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+  }
+
+  .zone-levels::before { content: "Level "; }
+  .zone-xp::after { content: " XP/hr"; }
+  .zone-gold::after { content: " /hr"; }
+
+  .zone-table .zone-farmers {
+    flex-basis: 100%;
+    order: 3;
+    width: auto;
+    min-width: 0;
+  }
+
+  .zone-table .zone-farmers:empty {
+    display: none;
+  }
+
+  .zone-farmers::before {
+    content: "Farming: ";
+    color: var(--text-muted);
+  }
 }
 
 @media (max-width: 480px) {
@@ -2722,5 +2819,64 @@ main:has(.character-sheet) {
     overflow: hidden;
     background: rgb(4 4 20);
     transform: none;
+  }
+
+  /* The nav gets its own row, its links splitting it evenly. */
+  .site-nav {
+    flex: 1 1 100%;
+  }
+
+  .site-nav a {
+    flex: 1;
+    padding-inline: 0.25rem;
+    text-align: center;
+    white-space: nowrap;
+  }
+}
+
+/* Touch screens: controls at least 44px tall (Apple's and WCAG's touch target size), and form controls at
+   16px so iOS doesn't zoom in when one is tapped. */
+@media (pointer: coarse) {
+  .button,
+  .chip,
+  .site-nav a,
+  .sort-control select,
+  .spec-picker select {
+    min-height: 2.75rem;
+  }
+
+  .site-nav a {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .sort-control select,
+  .spec-picker select,
+  input[type="search"] {
+    font-size: 1rem;
+  }
+
+  .notice-close {
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+    margin: -0.6rem -0.75rem -0.6rem 0;
+  }
+
+  /* Small links get a bigger tap area without moving anything around them. */
+  .farmer-gear,
+  .site-footer a {
+    padding-block: 0.6rem;
+    margin-block: -0.6rem;
+  }
+
+  #app a:not([class]),
+  .notice a {
+    padding-block: 0.35rem;
+  }
+
+  .quest-hint {
+    padding: 0.4rem;
+    margin: -0.4rem -0.1rem;
   }
 }

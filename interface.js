@@ -348,6 +348,8 @@ function handleSelectGuild(guildId) {
 function handleFarmSelect(characterId) {
   farmSelectedId = characterId
   render()
+  // On a phone the zones are far below the character cards.
+  if (window.matchMedia?.('(max-width: 640px)').matches) app.querySelector('.zone-tables')?.scrollIntoView({ block: 'start' })
 }
 
 function handleSend(characterId, zoneName) {

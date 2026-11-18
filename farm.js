@@ -175,17 +175,17 @@ function renderZoneRow(account, character, zone, best, onSend, onRecall) {
   }
 
   return el('tr', { class: [isHere && 'current', lockReason && 'locked'].filter(Boolean).join(' ') || null },
-    el('th', { scope: 'row' }, zone.name, best?.zone === zone.name
+    el('th', { scope: 'row', class: 'zone-name' }, zone.name, best?.zone === zone.name
       ? el('span', { class: 'path-mark', title: `Where ${character.characterName}'s time is worth most right now, counting the trip` }, 'Best')
       : null),
-    el('td', {}, badge(zone.faction)),
-    el('td', { class: 'num' }, zone.minLevel === zone.maxLevel ? String(zone.minLevel) : `${zone.minLevel}–${zone.maxLevel}`),
-    el('td', { class: `num${xpNote || !rates.beatable ? ' reduced' : ''}`, title: [fights, xpNote].filter(Boolean).join('. ') },
+    el('td', { class: 'zone-faction' }, badge(zone.faction)),
+    el('td', { class: 'num zone-levels' }, zone.minLevel === zone.maxLevel ? String(zone.minLevel) : `${zone.minLevel}–${zone.maxLevel}`),
+    el('td', { class: `num zone-xp${xpNote || !rates.beatable ? ' reduced' : ''}`, title: [fights, xpNote].filter(Boolean).join('. ') },
       rates.xpPerHour > 0 ? formatNumber(rates.xpPerHour) : '—'),
-    el('td', { class: 'num', title: fights }, rates.beatable ? money(rates.copperPerHour) : '—'),
+    el('td', { class: 'num zone-gold', title: fights }, rates.beatable ? money(rates.copperPerHour) : '—'),
     el('td', { class: 'zone-farmers' }, farmers.length
       ? farmers.map((c, i) => [i > 0 && ', ', el('span', { style: { color: c.classColor } }, c.characterName)])
-      : ''),
+      : null),
     el('td', { class: 'zone-action' }, action),
   )
 }
