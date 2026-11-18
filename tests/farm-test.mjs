@@ -9,6 +9,7 @@ const HOUR = 3600 * 1000
 const html = readFileSync(ROOT + 'index.html', 'utf8').replace(/<script[^>]*><\/script>/, '')
 const dom = new JSDOM(html, { url: 'http://localhost/#/farm', pretendToBeVisual: true })
 const w = dom.window
+w.scrollTo = () => {}
 Object.assign(globalThis, { window: w, document: w.document, location: w.location, localStorage: w.localStorage, confirm: () => true })
 globalThis.addEventListener = w.addEventListener.bind(w)
 
