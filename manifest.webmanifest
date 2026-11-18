@@ -1,0 +1,17 @@
+{
+  "id": "./",
+  "name": "Guild Master Raid Leader",
+  "short_name": "GMRL",
+  "description": "An idle game: lead a Classic WoW guild whose characters level, farm, fight and run dungeons on their own.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#12100e",
+  "theme_color": "#12100e",
+  "icons": [
+    { "src": "icons/app-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/app-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/app-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/app-icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

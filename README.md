@@ -5,19 +5,37 @@ Guild Master Raid Leader
     npm install
     npm start
 
-This runs `dev-server.js` (live-server on http://127.0.0.1:8080) and opens main.html.
+This runs `dev-server.js` (live-server on http://127.0.0.1:8080) and opens the game (`index.html`).
 
     npm test
 
 This runs every `tests/*-test.mjs` suite (jsdom, no browser needed); `node tests/<name>-test.mjs` runs one and prints its checks.
 
-`tools/` holds dev scripts, each described in its first lines: `build-gear-data.mjs` regenerates `gear-data.js` from source data in `~/gmrl-data` (see the file for what goes there); the `*-sim.mjs`, `measure.mjs` and `sim-baseline.mjs` scripts print balance numbers; `shot.mjs`, `reload-check.mjs` and `tabs-check.mjs` drive headless Chrome.
+`tools/` holds dev scripts, each described in its first lines: `build-gear-data.mjs` regenerates `gear-data.js` from source data in `~/gmrl-data` (see the file for what goes there); the `*-sim.mjs`, `measure.mjs` and `sim-baseline.mjs` scripts print balance numbers; `shot.mjs`, `reload-check.mjs`, `tabs-check.mjs` and `make-app-icons.mjs` drive headless Chrome.
 
 An account holds guilds, and each guild holds its characters. A guild is Alliance or Horde and only takes characters of that faction; every character belongs to exactly one guild, chosen when it's created. Guilds can't be renamed and characters can't move between guilds. An account can have one guild of each faction, each with up to 10 characters (`GUILD_SIZE` in `guild.js`; older saves over the cap keep their characters). Each faction can create 5 new characters a day (`DAILY_CHARACTERS` in `account.js`); the count resets at midnight US Eastern, and deleting a character doesn't give one back. A new player starts with no guilds and is sent to Create Guild; after that, use "+ Create Guild" on the roster to found the other one.
 
 The account is saved in the browser's localStorage (older saves are converted on load). The roster's "Save to file" button saves it as a backup: in Chrome and Edge you pick where, and "Load from file" then opens in the same folder; other browsers download `gmrl-save.json`. "Load from file" (also on the first Create Guild screen) replaces the account with a backup after asking, and time since the backup was last played pays out as time away. Dev tools such as `tools/shot.mjs` and `tests/guild-test.mjs` read `gmrl-save.json` from this folder, so move it here to use them.
 
-The footer shows "Alpha" and the version: bump it in `main.html` and `package.json` together.
+Browsers can clear a site's saved data, so the game asks them to keep it (`navigator.storage.persist()`, on founding the first guild and on saving or loading a file), the roster footer says when the account was last saved to a file, and a notice reminds the player once a day when it's been 7 days or more (`BACKUP_EVERY_DAYS` in `storage.js`). Saves are kept per web address, so a player's save stays with the address they played at.
+
+## Hosting
+
+The game is hosted as static files on Cloudflare Pages, which builds and deploys every push to GitHub: `main` goes live, other branches get their own preview address. Its build command is `npm test && npm run build` with output folder `dist`, so a push with failing tests isn't deployed. `.github/workflows/test.yml` also runs the tests and a build on every push and pull request.
+
+    npm run build
+
+`tools/build.mjs` writes `dist/` (or the folder given after `--`): `index.html`, the modules it imports, styles and icons, and nothing else (no tests, tools or saves). It stamps the commit being deployed into `version.js` and `sw.js`, and writes `version.json` (the version and commit, for the update check) and `_headers` (Cloudflare's response headers: a Content Security Policy that only allows this site plus Wowhead's icon server for images, and other security headers). Running from source, the update check and the service worker are off.
+
+    npm run preview
+
+This builds, then serves `dist/` at http://127.0.0.1:8081 the way Cloudflare Pages will (`tools/preview.mjs`: the `_headers` apply, `/index.html` redirects to `/`), with the update check, service worker and app install working. It's a different address from `npm start`, so it has its own save; use Save to file and Load from file to move one across. A rebuild only shows the update banner once the commit changes.
+
+To release a version, bump `version` in `package.json`, and add an entry with that version, the date and notes for players at the top of `CHANGES` in `version.js` (the build fails if the two differ). The footer shows the version and links to "What's new" (`#/changes`), and players who last played an older version get a notice linking there. Every deploy, version bump or not, gets a new commit id: open pages check `version.json` every 10 minutes and when the tab comes back into view, and show a banner asking to reload when it changed. The game keeps running until they do.
+
+The game can be installed as an app (`manifest.webmanifest`, icons from `icons/app-icon.svg` via `tools/make-app-icons.mjs`) and works offline: the service worker (`sw.js`) keeps a copy of every file, loads from the network first so updates arrive right away, and falls back to its copy when offline. Each deploy keeps its own copy and drops the older ones. Item and talent icons come from Wowhead and only show when online.
+
+The footer's "Report a bug" opens a new GitHub issue with the version, commit and browser filled in, so players need a GitHub account and the repository must be public (else change `BUG_REPORT_URL` in `interface.js`, e.g. to a `mailto:` link).
 
 ## Gear
 

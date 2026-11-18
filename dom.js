@@ -59,3 +59,10 @@ export function formatDuration(hours) {
   if (d) return `${d}d ${h}h`
   return h ? `${h}h ${m}m` : `${m}m`
 }
+
+// How long ago a time (ms) was, in whole days: "today", "yesterday", "8 days ago"
+export function formatDaysAgo(at, now = Date.now()) {
+  const days = Math.floor((now - at) / (24 * 3600 * 1000))
+  if (days <= 0) return 'today'
+  return days === 1 ? 'yesterday' : `${days} days ago`
+}

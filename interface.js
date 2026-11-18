@@ -1,7 +1,8 @@
 import { renderCharacterForm } from './character-form.js'
+import { renderChanges } from './changes-view.js'
 import { renderCharacterSheet } from './character-sheet.js'
 import { MAX_LEVEL } from './data.js'
-import { el, formatChance, formatDuration, formatNumber } from './dom.js'
+import { el, formatChance, formatDaysAgo, formatDuration, formatNumber } from './dom.js'
 import { renderFarm, updateFarm } from './farm.js'
 import { getItem } from './gear.js'
 import Guild from './guild.js'
@@ -9,7 +10,9 @@ import { renderGuildForm } from './guild-form.js'
 import { renderRoster } from './roster.js'
 import { DEFAULT_SORT } from './sort.js'
 import { renderTalents } from './talents-view.js'
-import { STORAGE_KEY, loadAccount, pickSaveFile, readSave, saveAccount, saveAccountToFile } from './storage.js'
+import { STORAGE_KEY, backupOverdue, lastBackup, loadAccount, markBackup, pickSaveFile, readSave, requestPersistentStorage, saveAccount, saveAccountToFile } from './storage.js'
+import { newerBuild, registerServiceWorker, unseenChanges } from './updates.js'
+import { BUILD, VERSION } from './version.js'
 import { renderWorldPvp, headline } from './world-pvp.js'
 import { renderDungeons, runHeadline } from './dungeons-view.js'
 import { encounterRecord } from './pvp.js'
@@ -18,6 +21,9 @@ import Account, { MAX_AWAY_HOURS } from './account.js'
 const APP_TITLE = 'Guild Master Raid Leader'
 const TICK_MS = 1000
 const SAVE_EVERY_MS = 15000
+const UPDATE_CHECK_MS = 10 * 60 * 1000 // how often an open page asks the server whether there's an update
+const REMIND_EVERY_MS = 24 * 3600 * 1000 // backup reminders, at most
+const BUG_REPORT_URL = 'https://github.com/pakawakajaka/gmrl/issues/new'
 let createReset = Account.nextCreateReset() // see gameTick
 const MAX_NOTICES = 4
 const MAX_UPGRADE_NOTICES = 3
@@ -27,6 +33,7 @@ const MAX_RUN_NOTICES = 2
 const app = document.getElementById('app')
 const goldEl = document.getElementById('gold')
 const noticesEl = document.getElementById('notices')
+const updateEl = document.getElementById('update')
 
 const loaded = loadAccount()
 let account = loaded.account
@@ -37,6 +44,9 @@ let farmSort = DEFAULT_SORT
 let lastSave = Date.now()
 let stopped = false // the save is from a newer version of the game: this page must not touch it
 let ticker
+let lastUpdateCheck = -Infinity
+let updateFound = false
+let remindedAt = -Infinity // last backup reminder
 
 function currentView() {
   const [view, id, sub] = location.hash.replace(/^#\/?/, '').split('/')
@@ -46,7 +56,7 @@ function currentView() {
 function render() {
   if (stopped) return
   // A new account has no guilds, so it starts on the create-guild screen.
-  if (account.guilds.length === 0 && currentView().view !== 'create-guild') window.history.replaceState(null, '', '#/create-guild')
+  if (account.guilds.length === 0 && !['create-guild', 'changes'].includes(currentView().view)) window.history.replaceState(null, '', '#/create-guild')
   const { view, id, sub } = currentView()
   const character = view === 'character' ? account.getCharacter(id) : undefined
   const focusKey = document.activeElement?.dataset?.focusKey
@@ -94,11 +104,14 @@ function render() {
     app.replaceChildren(renderWorldPvp({ account, encounterId: id }))
   } else if (view === 'dungeons') {
     app.replaceChildren(renderDungeons({ account, runId: id }))
+  } else if (view === 'changes') {
+    app.replaceChildren(renderChanges())
   } else {
     app.replaceChildren(renderRoster({
       account,
       selectedGuild,
       sortKey: rosterSort,
+      backup: { at: lastBackup(), overdue: backupOverdue(account) },
       onSelectGuild: handleSelectGuild,
       onSort: (key) => { rosterSort = key; render() },
       onSaveToFile: handleSaveToFile,
@@ -107,7 +120,7 @@ function render() {
   }
 
   for (const link of document.querySelectorAll('.site-nav a')) {
-    const active = link.dataset.view === (['farm', 'pvp', 'dungeons'].includes(view) ? view : 'roster')
+    const active = view !== 'changes' && link.dataset.view === (['farm', 'pvp', 'dungeons'].includes(view) ? view : 'roster')
     if (active) link.setAttribute('aria-current', 'page')
     else link.removeAttribute('aria-current')
   }
@@ -269,6 +282,35 @@ function gameTick() {
   }
   updateGold()
   if (Date.now() - lastSave >= SAVE_EVERY_MS) save()
+  checkForUpdate()
+  remindBackup()
+}
+
+// Asks the server whether a newer version is deployed, at most every `gap` ms, until there is one.
+function checkForUpdate(gap = UPDATE_CHECK_MS) {
+  if (updateFound || stopped || Date.now() - lastUpdateCheck < gap) return
+  lastUpdateCheck = Date.now()
+  newerBuild().then((live) => { if (live && !updateFound && !stopped) showUpdate(live.version) })
+}
+
+// A banner under the header until the player reloads. The game keeps running meanwhile.
+function showUpdate(version) {
+  updateFound = true
+  updateEl.replaceChildren(
+    el('p', {}, version && version !== VERSION ? `Version ${version} is out.` : 'An update is out.', ' Reload to get it. Your progress is saved.'),
+    el('button', { type: 'button', class: 'button primary small', onclick: () => { save(); location.reload() } }, 'Reload'),
+  )
+  updateEl.hidden = false
+}
+
+// Browsers can clear a site's data, so every BACKUP_EVERY_DAYS remind the player to save to a file (once a day).
+function remindBackup() {
+  if (stopped || Date.now() - remindedAt < REMIND_EVERY_MS || !backupOverdue(account)) return
+  remindedAt = Date.now()
+  const at = lastBackup()
+  notify(at ? `Your last backup was ${formatDaysAgo(at)}.` : "You haven't saved a backup yet.",
+    ' Browsers sometimes clear saved games, so keep a copy. ',
+    el('button', { type: 'button', class: 'button small', onclick: (event) => { event.target.closest('.notice').remove(); handleSaveToFile() } }, 'Save to file'))
 }
 
 function handleSave(character, guildId) {
@@ -282,6 +324,7 @@ function handleCreateGuild({ guildName, faction }) {
   if (!account.addGuild(guild)) return
   selectedGuild = guild.id
   save()
+  requestPersistentStorage()
   notify(`${guild.guildName} (${faction}) was founded.`)
   location.hash = '#/roster'
 }
@@ -340,7 +383,12 @@ async function handleSaveToFile() {
     console.error('Could not write the save file.', error)
     return notify('The save file could not be written.')
   }
-  if (file) notify(file.picked ? `Saved ${file.name}.` : `Saved ${file.name} to your downloads.`)
+  if (file) {
+    markBackup()
+    requestPersistentStorage()
+    notify(file.picked ? `Saved ${file.name}.` : `Saved ${file.name} to your downloads.`)
+    if (!app.querySelector('form, dialog[open]')) render() // the roster says when you last saved one
+  }
 }
 
 async function handleLoadFromFile() {
@@ -390,6 +438,8 @@ function useBackup(name, backup) {
   selectedGuild = null
   farmSelectedId = null
   save()
+  markBackup()
+  requestPersistentStorage()
   welcomeBack(backup.dropped)
   notify(`Loaded ${name}.`)
   if (location.hash === '#/roster') render()
@@ -433,6 +483,7 @@ window.addEventListener('hashchange', () => {
 window.addEventListener('pagehide', save)
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') save()
+  else checkForUpdate(60 * 1000) // back to the tab: check soon, maybe after days away
 })
 // Another tab saved: take its state, so open tabs don't keep overwriting each other's runs and fights.
 window.addEventListener('storage', (event) => {
@@ -443,10 +494,18 @@ window.addEventListener('storage', (event) => {
   if (!app.querySelector('dialog[open]')) render()
 })
 
+document.getElementById('version').textContent = `v${VERSION}`
+document.getElementById('report').href = `${BUG_REPORT_URL}?${new URLSearchParams({
+  body: `Version: v${VERSION} (${BUILD})\nBrowser: ${navigator.userAgent}\n\nWhat happened?\n\n\nWhat did you expect to happen?\n`,
+})}`
+registerServiceWorker()
+
 if (loaded.newer) {
   showNewerSave()
 } else {
   welcomeBack()
+  if (unseenChanges().length) notify(`Updated to v${VERSION}. `, el('a', { href: '#/changes' }, "See what's new"), '.')
+  remindBackup()
   ticker = setInterval(gameTick, TICK_MS)
   render()
 }

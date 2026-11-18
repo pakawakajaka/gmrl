@@ -2,6 +2,49 @@ import Account, { SAVE_VERSION } from './account.js'
 
 export const STORAGE_KEY = 'gmrl.account'
 export const SAVE_FILE = 'gmrl-save.json'
+const BACKUP_KEY = 'gmrl.lastBackup' // when this browser last saved the account to a file, or loaded one
+const SINCE_KEY = 'gmrl.playingSince' // when this browser first had characters, for the first reminder
+export const BACKUP_EVERY_DAYS = 7
+
+function readTime(key) {
+  try {
+    const at = Number(localStorage.getItem(key))
+    return at > 0 ? at : null
+  } catch {
+    return null
+  }
+}
+
+function writeTime(key, at) {
+  try {
+    localStorage.setItem(key, String(at))
+  } catch (error) {
+    console.error('Could not write to localStorage.', error)
+  }
+}
+
+// When this browser last saved the account to a file or loaded one (ms), or null if it never has.
+export const lastBackup = () => readTime(BACKUP_KEY)
+
+export function markBackup(at = Date.now()) {
+  writeTime(BACKUP_KEY, at)
+}
+
+// Whether to remind the player to save a backup: BACKUP_EVERY_DAYS after the last one or, with none, after the
+// player first had characters here.
+export function backupOverdue(account, now = Date.now()) {
+  if (account.characters.length === 0) return false
+  let since = lastBackup() ?? readTime(SINCE_KEY)
+  if (!since) writeTime(SINCE_KEY, since = now)
+  return now - since >= BACKUP_EVERY_DAYS * 24 * 3600 * 1000
+}
+
+// Asks the browser not to clear the save when the device runs short of space. Chrome and Safari decide on their
+// own; Firefox asks the player, so call it after something they did. (Safari also clears a site's data after 7
+// days of use without visiting it, unless the game is installed as an app; backups cover the rest.)
+export function requestPersistentStorage() {
+  navigator.storage?.persist?.().catch(() => {})
+}
 
 // How many characters the save data holds, in either save format (see Account.fromJSON).
 function savedCharacterCount(data) {

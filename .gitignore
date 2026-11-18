@@ -1,3 +1,4 @@
 node_modules/
+dist/
 gmrl-save.json
 .DS_Store

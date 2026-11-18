@@ -5,8 +5,8 @@ const { JSDOM } = createRequire(import.meta.url)('jsdom')
 
 import { fileURLToPath } from 'node:url'
 const ROOT = fileURLToPath(new URL('../', import.meta.url))
-const html = readFileSync(ROOT + 'main.html', 'utf8').replace(/<script[^>]*><\/script>/, '')
-const dom = new JSDOM(html, { url: 'http://localhost/main.html#/roster', pretendToBeVisual: true })
+const html = readFileSync(ROOT + 'index.html', 'utf8').replace(/<script[^>]*><\/script>/, '')
+const dom = new JSDOM(html, { url: 'http://localhost/#/roster', pretendToBeVisual: true })
 const w = dom.window
 w.scrollTo = () => {}
 Object.assign(globalThis, { window: w, document: w.document, location: w.location, localStorage: w.localStorage, confirm: () => true })
@@ -55,6 +55,31 @@ check(doc.activeElement === again, 'focus kept on the talent')
 again.dispatchEvent(new w.MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
 await tick()
 check(doc.querySelector(`[data-talent="${key}"] .talent-rank`).textContent.startsWith('0/'), 'right-click unlearns')
+
+// Touch and hold removes a point, and the tap that ends the hold doesn't add it back.
+const touch = (target, type) => {
+  const event = new w.MouseEvent(type, { bubbles: true, cancelable: true, clientX: 10, clientY: 10 })
+  Object.defineProperty(event, 'pointerType', { value: 'touch' })
+  target.dispatchEvent(event)
+}
+doc.querySelector(`[data-talent="${key}"]`).click()
+await tick()
+const held = doc.querySelector(`[data-talent="${key}"]`)
+touch(held, 'pointerdown')
+await new Promise((r) => setTimeout(r, 600))
+check(doc.querySelector(`[data-talent="${key}"] .talent-rank`).textContent.startsWith('0/'), 'touch and hold unlearns')
+touch(held, 'pointerup')
+held.click()
+await tick()
+check(doc.querySelector(`[data-talent="${key}"] .talent-rank`).textContent.startsWith('0/'), 'the lift after a hold does not relearn')
+const tapped = doc.querySelector(`[data-talent="${key}"]`)
+touch(tapped, 'pointerdown')
+touch(tapped, 'pointerup')
+tapped.click()
+await tick()
+check(doc.querySelector(`[data-talent="${key}"] .talent-rank`).textContent.startsWith('1/'), 'a quick tap learns')
+doc.querySelector(`[data-talent="${key}"]`).dispatchEvent(new w.MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+await tick()
 const locked = doc.querySelector('.talent.locked')
 locked.click()
 await tick()

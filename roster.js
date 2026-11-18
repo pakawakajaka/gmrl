@@ -1,9 +1,10 @@
-import { badge, el, formatNumber } from './dom.js'
+import { badge, el, formatDaysAgo, formatNumber } from './dom.js'
 import { FACTIONS, ROLES } from './data.js'
 import { cantCreateReason } from './character-form.js'
 import { renderSortControl, sortCharacters } from './sort.js'
 
-export function renderRoster({ account, selectedGuild, sortKey, onSelectGuild, onSort, onSaveToFile, onLoadFromFile }) {
+// `backup` is { at, overdue }: when the account was last saved to a file (ms, or null) and whether that's too long ago.
+export function renderRoster({ account, selectedGuild, sortKey, backup, onSelectGuild, onSort, onSaveToFile, onLoadFromFile }) {
   const guild = account.getGuild(selectedGuild)
   const characters = sortCharacters(guild ? guild.characters : account.characters, sortKey)
   const createHref = guild ? `#/create/${guild.id}` : '#/create'
@@ -31,6 +32,8 @@ export function renderRoster({ account, selectedGuild, sortKey, onSelectGuild, o
       ? el('ul', { class: 'character-list' }, characters.map((c) => renderCharacterCard(c, account)))
       : el('p', { class: 'empty' }, 'No characters here yet. ', el('a', { href: createHref }, 'Create one'), '.'),
     el('footer', { class: 'view-footer' },
+      backup && el('span', { class: backup.overdue ? 'backup-status overdue' : 'backup-status' },
+        backup.at ? `Last saved to file ${formatDaysAgo(backup.at)}` : 'Not saved to file yet'),
       el('button', { type: 'button', class: 'button subtle', onclick: onSaveToFile }, 'Save to file'),
       el('button', { type: 'button', class: 'button subtle', onclick: onLoadFromFile }, 'Load from file'),
     ),

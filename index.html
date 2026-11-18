@@ -3,7 +3,12 @@
     <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="description" content="An idle game: lead a Classic WoW guild whose characters level, farm, fight and run dungeons on their own.">
+        <meta name="theme-color" content="#12100e">
         <title>Guild Master Raid Leader</title>
+        <link rel="icon" href="icons/app-icon.svg" type="image/svg+xml">
+        <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+        <link rel="manifest" href="manifest.webmanifest">
         <link rel="stylesheet" href="styles.css">
         <script type="module" src="interface.js"></script>
     </head>
@@ -18,11 +23,14 @@
             </nav>
             <p class="account"><span id="accountLabel">Account: <strong id="accountName"></strong></span><span id="gold"></span></p>
         </header>
+        <div id="update" class="update-banner" role="status" hidden></div>
         <ul id="notices" class="notices" aria-live="polite"></ul>
         <main id="app"></main>
         <footer class="site-footer">
             <span class="badge badge-alpha">Alpha</span>
-            <span id="version">v0.1.0</span>
+            <span id="version"></span>
+            <a href="#/changes">What's new</a>
+            <a id="report" target="_blank" rel="noopener">Report a bug</a>
         </footer>
     </body>
 </html>

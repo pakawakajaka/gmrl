@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 const { JSDOM } = createRequire(import.meta.url)('jsdom')
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url))
-const html = readFileSync(ROOT + 'main.html', 'utf8').replace(/<script[^>]*><\/script>/, '')
+const html = readFileSync(ROOT + 'index.html', 'utf8').replace(/<script[^>]*><\/script>/, '')
 globalThis.setInterval = () => 1
 
 const { default: Account, MAX_AWAY_HOURS } = await import(ROOT + 'account.js')
@@ -40,7 +40,7 @@ check('under the cap pays it all', short.r.awayHours === 2 && short.r.hours === 
 // A fresh page with a save last ticked `secondsAgo` seconds ago; returns the notice texts.
 let pages = 0
 async function noticesAfter(secondsAgo) {
-  const w = new JSDOM(html, { url: 'http://localhost/main.html#/roster', pretendToBeVisual: true }).window
+  const w = new JSDOM(html, { url: 'http://localhost/#/roster', pretendToBeVisual: true }).window
   w.scrollTo = () => {}
   Object.assign(globalThis, { window: w, document: w.document, location: w.location, localStorage: w.localStorage })
   const acc = sampleAccount()

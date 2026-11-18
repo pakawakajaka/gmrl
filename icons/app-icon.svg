@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <radialGradient id="glow" cx="50%" cy="10%" r="90%">
+      <stop offset="0" stop-color="#4a3622"/>
+      <stop offset="1" stop-color="#12100e"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#glow)"/>
+  <path d="M256 96 L392 140 V256 C392 336 332 392 256 424 C180 392 120 336 120 256 V140 Z" fill="#1d1a17" stroke="#f0b232" stroke-width="14" stroke-linejoin="round"/>
+  <text x="256" y="300" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="118" font-weight="700" fill="#f0b232">GM</text>
+</svg>

@@ -1,4 +1,4 @@
-// Loads main.html in jsdom with the real modules and exercises farming. Run: node tests/farm-test.mjs
+// Loads index.html in jsdom with the real modules and exercises farming. Run: node tests/farm-test.mjs
 import { createRequire } from 'module'
 import { readFileSync } from 'fs'
 const { JSDOM } = createRequire(import.meta.url)('jsdom')
@@ -6,8 +6,8 @@ const { JSDOM } = createRequire(import.meta.url)('jsdom')
 import { fileURLToPath } from 'node:url'
 const ROOT = fileURLToPath(new URL('../', import.meta.url))
 const HOUR = 3600 * 1000
-const html = readFileSync(ROOT + 'main.html', 'utf8').replace(/<script[^>]*><\/script>/, '')
-const dom = new JSDOM(html, { url: 'http://localhost/main.html#/farm', pretendToBeVisual: true })
+const html = readFileSync(ROOT + 'index.html', 'utf8').replace(/<script[^>]*><\/script>/, '')
+const dom = new JSDOM(html, { url: 'http://localhost/#/farm', pretendToBeVisual: true })
 const w = dom.window
 Object.assign(globalThis, { window: w, document: w.document, location: w.location, localStorage: w.localStorage, confirm: () => true })
 globalThis.addEventListener = w.addEventListener.bind(w)

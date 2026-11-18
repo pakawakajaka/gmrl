@@ -1,5 +1,5 @@
 // The talent selector: the class's three trees, with the spec's default build highlighted. Click a talent
-// to add a point, right-click (or Shift+click, or the - key) to take one back.
+// to add a point, right-click (or Shift+click, the - key, or touch and hold) to take one back.
 import { el } from './dom.js'
 import { TALENTS } from './gear-data.js'
 import { specOptions } from './gear.js'
@@ -22,6 +22,16 @@ const SUPPORT = {
   full: 'Simulated in fights.',
   partial: 'Partly simulated in fights.',
   none: 'Not simulated in fights.',
+}
+
+// Touch and hold removes a point (iPhones have no long-press right-click). The view re-renders after each
+// change, so the press is tracked here rather than on the button.
+const HOLD_MS = 500
+let hold = null
+let held = false
+const endHold = () => {
+  clearTimeout(hold?.timer)
+  hold = null
 }
 
 // Points per tree, e.g. [31, 0, 20].
@@ -90,7 +100,7 @@ export function renderTalents({ character, onLearn, onUnlearn, onReset, onDefaul
     ),
     el('p', { class: 'note talent-help' },
       el('span', { class: 'talent-legend' }), ` Gold ring: the ${character.characterSpec} default build (dashed until learned), which idle leveling spends new points on. `,
-      'Click a talent to add a point; right-click, Shift+click or press - to remove one. Changing talents is free, and so is changing spec: it respends on the new spec\'s default build and swaps in its gear from the bag.'),
+      'Click a talent to add a point; right-click, Shift+click or press - to remove one. On a phone, tap to add and touch and hold to remove. Changing talents is free, and so is changing spec: it respends on the new spec\'s default build and swaps in its gear from the bag.'),
     el('div', { class: 'talent-trees' }, (TALENTS[cls] ?? []).map((tree, i) =>
       renderTree(character, tree, counts[i], defaults, unspent, onLearn, onUnlearn))),
   )
@@ -152,8 +162,36 @@ function renderTalent(character, t, tree, defaultRank, unspent, onLearn, onUnlea
     'aria-disabled': !learnable && !rank ? 'true' : null,
     'data-focus-key': `talent-${t.key}`,
     'data-talent': t.key,
-    onclick: (event) => (event.shiftKey ? remove(event) : learnable && onLearn(t.key)),
-    oncontextmenu: remove,
+    onclick: (event) => {
+      // The finger lifting after a hold still clicks; that tap shouldn't add the point straight back.
+      if (held) return void (held = false)
+      if (event.shiftKey) remove(event)
+      else if (learnable) onLearn(t.key)
+    },
+    // Android turns a long press into a right-click, so whichever of it and the timer comes first wins.
+    oncontextmenu: (event) => {
+      if (held) return event.preventDefault()
+      if (hold) {
+        endHold()
+        held = true
+      }
+      remove(event)
+    },
+    onpointerdown: (event) => {
+      held = false
+      endHold()
+      if (event.pointerType !== 'touch') return
+      hold = { x: event.clientX, y: event.clientY, timer: setTimeout(() => {
+        hold = null
+        held = true
+        if (canUnlearn(character, t.key)) onUnlearn(t.key)
+      }, HOLD_MS) }
+    },
+    onpointermove: (event) => {
+      if (hold && Math.hypot(event.clientX - hold.x, event.clientY - hold.y) > 10) endHold()
+    },
+    onpointerup: endHold,
+    onpointercancel: endHold,
     onkeydown: (event) => {
       if (event.key === '-' || event.key === 'Delete' || event.key === 'Backspace') remove(event)
     },
